@@ -99,6 +99,12 @@ def load_subject_data(subject: int, data_path: str, exclude_base: bool = False):
             indexes.append(index)
     raw_conc.annotations.delete(indexes)
 
+    # # Apply bandpass filter (8-40 Hz)
+    # raw_conc.filter(l_freq=8., h_freq=40., fir_design='firwin', skip_by_annotation='edge')
+    #
+    # # Apply notch filter (60 Hz) for USA power line noise
+    # raw_conc.notch_filter(freqs=60., fir_design='firwin', skip_by_annotation='edge')
+
     eegbci.standardize(raw_conc)
     montage = make_standard_montage('standard_1005')
     raw_conc.set_montage(montage)

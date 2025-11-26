@@ -234,8 +234,8 @@ def evaluate(model, dataset_conf, results_path,X_test,y_test_onehot, allRuns=Tru
          info = info + 'acc: {:.5f}   kappa: {:.5f}   '.format(acc_bestRun, kappa_bestRun)
          if (allRuns):
              info = info + 'avg_acc: {:.5f} +- {:.5f}   avg_kappa: {:.5f} +- {:.5f}'.format(
-                 np.average(acc_allRuns), acc_allRuns.std(),
-                 np.average(kappa_allRuns), kappa_allRuns.std())
+                 np.average(acc_allRuns), np.std(acc_allRuns),
+                 np.average(kappa_allRuns), np.std(kappa_allRuns))
          print(info)
          log_write.write('\n' + info)
 
