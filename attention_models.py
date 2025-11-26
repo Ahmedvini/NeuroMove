@@ -1,7 +1,7 @@
 #%%
 import math
 import tensorflow as tf
-from tensorflow import keras
+# from tensorflow import keras
 from keras.layers import GlobalAveragePooling2D, GlobalMaxPooling2D, Reshape, Dense
 from keras.layers import multiply, Permute, Concatenate, Conv2D, Add, Activation, Lambda
 from keras.layers import Dropout, MultiHeadAttention, LayerNormalization, Reshape
@@ -24,17 +24,22 @@ def attention_block(net, attention_model):
         net = mha_block(net, vanilla = False)
     elif attention_model == 'se':   # Squeeze-and-excitation layer
         if(in_len < 4):
-            net = tf.expand_dims(net, axis=expanded_axis)
+            net = Lambda(lambda x: tf.expand_dims(x, axis=expanded_axis), output_shape=lambda s: s + (1,))(net)
         net = se_block(net, ratio=8)
     elif attention_model == 'cbam': # Convolutional block attention module
         if(in_len < 4):
-            net = tf.expand_dims(net, axis=expanded_axis)
+            net = Lambda(lambda x: tf.expand_dims(x, axis=expanded_axis), output_shape=lambda s: s + (1,))(net)
         net = cbam_block(net, ratio=8)
+    elif attention_model == 'improved_cbam': # Improved CBAM from paper
+        if(in_len < 4):
+            net = Lambda(lambda x: tf.expand_dims(x, axis=expanded_axis), output_shape=lambda s: s + (1,))(net)
+        net = improved_cbam_block(net, ratio=8)
     else:
         raise Exception("'{}' is not supported attention module!".format(attention_model))
         
     if (in_len == 3 and len(net.shape) == 4):
-        net = K.squeeze(net, expanded_axis)
+        # net = K.squeeze(net, expanded_axis)
+        net = Reshape((in_sh[1], in_sh[2]))(net)
     elif (in_len == 4 and len(net.shape) == 3):
         net = Reshape((in_sh[1], in_sh[2], in_sh[3]))(net)
     return net
@@ -141,6 +146,12 @@ def cbam_block(cbam_feature, ratio=8):
 	cbam_feature = spatial_attention(cbam_feature)
 	return cbam_feature
 
+def improved_cbam_block(cbam_feature, ratio=8):
+    """ Improved CBAM block with stochastic pooling in spatial attention """
+    cbam_feature = channel_attention(cbam_feature, ratio)
+    cbam_feature = improved_spatial_attention(cbam_feature)
+    return cbam_feature
+
 def channel_attention(input_feature, ratio=8):
 	channel_axis = 1 if K.image_data_format() == "channels_first" else -1
 # 	channel = input_feature._keras_shape[channel_axis]
@@ -210,6 +221,44 @@ def spatial_attention(input_feature):
 		
 	return multiply([input_feature, cbam_feature])
 
+def improved_spatial_attention(input_feature):
+    kernel_size = 7
+    
+    if K.image_data_format() == "channels_first":
+        channel = input_feature.shape[1]
+        cbam_feature = Permute((2,3,1))(input_feature)
+    else:
+        channel = input_feature.shape[-1]
+        cbam_feature = input_feature
+    
+    avg_pool = Lambda(lambda x: tf.reduce_mean(x, axis=3, keepdims=True), output_shape=lambda s: s[:-1] + (1,))(cbam_feature)
+    max_pool = Lambda(lambda x: tf.reduce_max(x, axis=3, keepdims=True), output_shape=lambda s: s[:-1] + (1,))(cbam_feature)
+    
+    # Stochastic pooling (weighted average based on magnitude)
+    def stochastic_pool_func(x):
+        abs_x = tf.abs(x)
+        sum_abs = tf.reduce_sum(abs_x, axis=3, keepdims=True)
+        sum_abs = tf.maximum(sum_abs, 1e-7)
+        probs = abs_x / sum_abs
+        return tf.reduce_sum(probs * x, axis=3, keepdims=True)
+
+    sto_pool = Lambda(stochastic_pool_func, output_shape=lambda s: s[:-1] + (1,))(cbam_feature)
+    
+    concat = Concatenate(axis=3)([avg_pool, max_pool, sto_pool])
+    
+    cbam_feature = Conv2D(filters = 1,
+                    kernel_size=kernel_size,
+                    strides=1,
+                    padding='same',
+                    activation='sigmoid',
+                    kernel_initializer='he_normal',
+                    use_bias=False)(concat) 
+    
+    if K.image_data_format() == "channels_first":
+        cbam_feature = Permute((3, 1, 2))(cbam_feature)
+        
+    return multiply([input_feature, cbam_feature])
+
 def eca_attention(input_feature, gama=2, b=1):
 	in_channel = input_feature.shape[-1]
 	kernel_size = int(abs((math.log(in_channel, 2) + b) / gama))
@@ -224,7 +273,7 @@ def eca_attention(input_feature, gama=2, b=1):
 	# [c,1]==>[c,1]
 	x = Conv1D(filters=1, kernel_size=kernel_size, padding='same', use_bias=False)(x)
 	# sigmoid
-	x = tf.nn.sigmoid(x)
+	x = Activation('sigmoid')(x)
 	# [c,1]==>[1,1,c]
 	x = Reshape((1, 1, in_channel))(x)
 	outputs = multiply([input_feature, x])

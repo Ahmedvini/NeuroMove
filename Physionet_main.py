@@ -1,5 +1,6 @@
 # %%
 import os
+os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir=/home/ezzo/anaconda3/lib/python3.13/site-packages/nvidia/cuda_nvcc'
 import time
 import numpy as np
 import matplotlib.pyplot as plt
@@ -63,6 +64,7 @@ def draw_performance_barChart(metric, label, results_path):
 
 # %% Training
 def train(dataset_conf, train_conf, results_path):
+    print("[DEBUG] Entered train()")
     # Get the current 'IN' time to calculate the overall training time
     in_exp = time.time()
     # Create a file to store the path of the best model among several runs
@@ -92,6 +94,11 @@ def train(dataset_conf, train_conf, results_path):
     bestTrainingHistory = []
     # Get training and test data
     X_train, y_train_onehot,X_test, y_test_onehot = load_physionet(data_path)
+    print(f"[DEBUG] Loaded data: X_train={None if X_train is None else getattr(X_train, 'shape', 'unknown')} ", end='')
+    try:
+        print(f" y_train={getattr(y_train_onehot, 'shape', 'unknown')} X_test={getattr(X_test, 'shape', 'unknown')} y_test={getattr(y_test_onehot, 'shape', 'unknown')}")
+    except Exception:
+        print()
 
     # Get the current 'IN' time to calculate the 'run' training time
     in_run = time.time()
@@ -99,7 +106,7 @@ def train(dataset_conf, train_conf, results_path):
     filepath = results_path + '/saved models/run-{}'.format(1)
     if not os.path.exists(filepath):
         os.makedirs(filepath)
-    filepath = filepath + '/subject-{}.h5'.format(1)
+    filepath = filepath + '/subject-{}.weights.h5'.format(1)
 
     # Create the model
     model = getModel(model_name)
@@ -137,7 +144,7 @@ def train(dataset_conf, train_conf, results_path):
 
     # Store the path of the best model among several runs
     best_run = np.argmax(acc)
-    filepath = '/saved models/run-{}/subject-{}.h5'.format(best_run + 1, 1) + '\n'
+    filepath = '/saved models/run-{}/subject-{}.weights.h5'.format(best_run + 1, 1) + '\n'
     best_models.write(filepath)
     # Get the current 'OUT' time to calculate the subject training time
     out_sub = time.time()
@@ -176,88 +183,89 @@ def train(dataset_conf, train_conf, results_path):
 
     # Evaluation
     model = getModel(model_name)
-    test(model, dataset_conf, results_path, X_test, y_test_onehot)
+    evaluate(model, dataset_conf, results_path, X_test, y_test_onehot)
 
 # %% Evaluation
-def test(model, dataset_conf, results_path,X_test,y_test_onehot, allRuns=True):
-    # Open the  "Log" file to write the evaluation results
-    log_write = open(results_path + "/log.txt", "a")
-    # Open the file that stores the path of the best models among several random runs.
-    best_models = open(results_path + "/best models.txt", "r")
+# Renamed from `test` to `evaluate` to avoid pytest treating this as a test function.
+def evaluate(model, dataset_conf, results_path,X_test,y_test_onehot, allRuns=True):
+     # Open the  "Log" file to write the evaluation results
+     log_write = open(results_path + "/log.txt", "a")
+     # Open the file that stores the path of the best models among several random runs.
+     best_models = open(results_path + "/best models.txt", "r")
 
-    # Get dataset paramters
-    n_classes = dataset_conf.get('n_classes')
+     # Get dataset paramters
+     n_classes = dataset_conf.get('n_classes')
 
-    # Initialize variables
-    cf_matrix = np.zeros([n_classes, n_classes])
+     # Initialize variables
+     cf_matrix = np.zeros([n_classes, n_classes])
 
-    # Calculate the average performance (average accuracy and K-score) for
-    # all runs (experiments) for each subject.
-    if (allRuns):
-        # Load the test accuracy and kappa metrics as arrays for all runs from a .npz
-        # file format, which is an uncompressed zipped archive, to calculate average
-        # accuracy/kappa over all runs.
-        perf_allRuns = open(results_path + "/perf_allRuns.npz", 'rb')
-        perf_arrays = np.load(perf_allRuns)
-        acc_allRuns = perf_arrays['acc']
-        kappa_allRuns = perf_arrays['kappa']
+     # Calculate the average performance (average accuracy and K-score) for
+     # all runs (experiments) for each subject.
+     if (allRuns):
+         # Load the test accuracy and kappa metrics as arrays for all runs from a .npz
+         # file format, which is an uncompressed zipped archive, to calculate average
+         # accuracy/kappa over all runs.
+         perf_allRuns = open(results_path + "/perf_allRuns.npz", 'rb')
+         perf_arrays = np.load(perf_allRuns)
+         acc_allRuns = perf_arrays['acc']
+         kappa_allRuns = perf_arrays['kappa']
 
-        # Load data
-        X_test, y_test_onehot = X_test, y_test_onehot
+         # Load data
+         X_test, y_test_onehot = X_test, y_test_onehot
 
-        # Load the best model out of multiple random runs (experiments).
-        filepath = best_models.readline()
-        model.load_weights(results_path + filepath[:-1])
+         # Load the best model out of multiple random runs (experiments).
+         filepath = best_models.readline()
+         model.load_weights(results_path + filepath[:-1])
 
-        # Predict MI task
-        y_pred = model.predict(X_test).argmax(axis=-1)
+         # Predict MI task
+         y_pred = model.predict(X_test).argmax(axis=-1)
 
-        # Calculate accuracy and K-score
-        labels = y_test_onehot.argmax(axis=-1)
-        acc_bestRun = accuracy_score(labels, y_pred)
-        kappa_bestRun = cohen_kappa_score(labels, y_pred)
-        # Calculate and draw confusion matrix
-        cf_matrix[:, :] = confusion_matrix(labels, y_pred, normalize='pred')
-        draw_confusion_matrix(cf_matrix[ :, :], results_path)
+         # Calculate accuracy and K-score
+         labels = y_test_onehot.argmax(axis=-1)
+         acc_bestRun = accuracy_score(labels, y_pred)
+         kappa_bestRun = cohen_kappa_score(labels, y_pred)
+         # Calculate and draw confusion matrix
+         cf_matrix[:, :] = confusion_matrix(labels, y_pred, normalize='pred')
+         draw_confusion_matrix(cf_matrix[ :, :], results_path)
 
-        # Print & write performance measures for each subject
-        info = 'Subject: {}   best_run: {:2}  '.format(1,
-                                                       (filepath[filepath.find('run-') + 4:filepath.find('/sub')]))
-        info = info + 'acc: {:.5f}   kappa: {:.5f}   '.format(acc_bestRun, kappa_bestRun)
-        if (allRuns):
-            info = info + 'avg_acc: {:.5f} +- {:.5f}   avg_kappa: {:.5f} +- {:.5f}'.format(
-                np.average(acc_allRuns), acc_allRuns.std(),
-                np.average(kappa_allRuns), kappa_allRuns.std())
-        print(info)
-        log_write.write('\n' + info)
+         # Print & write performance measures for each subject
+         info = 'Subject: {}   best_run: {:2}  '.format(1,
+                                                        (filepath[filepath.find('run-') + 4:filepath.find('/sub')]))
+         info = info + 'acc: {:.5f}   kappa: {:.5f}   '.format(acc_bestRun, kappa_bestRun)
+         if (allRuns):
+             info = info + 'avg_acc: {:.5f} +- {:.5f}   avg_kappa: {:.5f} +- {:.5f}'.format(
+                 np.average(acc_allRuns), acc_allRuns.std(),
+                 np.average(kappa_allRuns), kappa_allRuns.std())
+         print(info)
+         log_write.write('\n' + info)
 
-        # t-sne visualization
-        y_pred1 = model.predict(X_test)
-        tsne = TSNE(n_components=2, random_state=33, verbose=1, n_iter=1000)
-        tsne_results2 = tsne.fit_transform(y_pred1)
-        color_map = np.argmax(y_test_onehot, axis=1)
-        print(color_map.shape)
-        plt.figure(figsize=(8, 8))
-        display_labels = ['Left fist', 'Right fist']
-        for cl in range(2):#2 class
-        # for cl in range(4):#4 class
-            indices = np.where(color_map == cl)
-            print(indices[0].shape)
-            indices = indices[0]
-            plt.scatter(tsne_results2[indices, 0], tsne_results2[indices, 1], s=8, label=display_labels[cl])
-        plt.legend()
-        plt.show()
-        plt.savefig(results_path + '/t-sne_allsubject' + '.png')
+         # t-sne visualization
+         y_pred1 = model.predict(X_test)
+         tsne = TSNE(n_components=2, random_state=33, verbose=1, n_iter=1000)
+         tsne_results2 = tsne.fit_transform(y_pred1)
+         color_map = np.argmax(y_test_onehot, axis=1)
+         print(color_map.shape)
+         plt.figure(figsize=(8, 8))
+         display_labels = ['Left fist', 'Right fist']
+         for cl in range(2):#2 class
+         # for cl in range(4):#4 class
+             indices = np.where(color_map == cl)
+             print(indices[0].shape)
+             indices = indices[0]
+             plt.scatter(tsne_results2[indices, 0], tsne_results2[indices, 1], s=8, label=display_labels[cl])
+         plt.legend()
+         plt.show()
+         plt.savefig(results_path + '/t-sne_allsubject' + '.png')
 
-    # Print & write the average performance measures for all subjects
-    info = '\nAverage of {} subjects - best runs:\nAccuracy = {:.5f}   Kappa = {:.5f}\n'.format(1,
-        np.average(acc_bestRun), np.average(kappa_bestRun))
+     # Print & write the average performance measures for all subjects
+     info = '\nAverage of {} subjects - best runs:\nAccuracy = {:.5f}   Kappa = {:.5f}\n'.format(1,
+         np.average(acc_bestRun), np.average(kappa_bestRun))
 
-    print(info)
-    log_write.write(info)
+     print(info)
+     log_write.write(info)
 
-    # Close open files
-    log_write.close()
+     # Close open files
+     log_write.close()
 
 
 # %%
@@ -285,7 +293,7 @@ def getModel(model_name):
             n_windows=5,
 
             # Attention (AT) block parameter
-            attention='mha',  # Options: None, 'mha','mhla', 'cbam', 'se'
+            attention='improved_cbam',  # Options: None, 'mha','mhla', 'cbam', 'se', 'improved_cbam'
 
             # Temporal convolutional Fusion Network block (TCFN) parameters
             tcn_depth=2,
@@ -346,9 +354,67 @@ def getModel(model_name):
     return model
 
 # %%
+def get_data_path():
+    """Resolve the Physionet dataset directory.
+
+    Priority:
+    1. Environment variable PHYSIONET_DATA_DIR (if it exists and is a directory)
+    2. ./files directory inside the repo (if it looks like the dataset)
+    3. Original fallback path (/root/autodl-tmp/physionet)
+
+    Raises FileNotFoundError with guidance if no valid path is found.
+    """
+    # 1) Check environment variable
+    env_path = os.environ.get('PHYSIONET_DATA_DIR')
+    if env_path:
+        if os.path.isdir(env_path):
+            print(f"Using PHYSIONET_DATA_DIR={env_path}")
+            return env_path
+        else:
+            print(f"PHYSIONET_DATA_DIR is set to '{env_path}' but that path does not exist or is not a directory.")
+
+    # 2) Check ./files in the repo
+    repo_files = os.path.join(os.getcwd(), 'files')
+    if os.path.isdir(repo_files):
+        # Quick heuristic: look for S001 or RECORDS or any subdirectory starting with 'S'
+        looks_like_dataset = False
+        if os.path.exists(os.path.join(repo_files, 'S001')) or os.path.exists(os.path.join(repo_files, 'RECORDS')):
+            looks_like_dataset = True
+        else:
+            try:
+                for name in os.listdir(repo_files):
+                    if os.path.isdir(os.path.join(repo_files, name)) and name.startswith('S'):
+                        looks_like_dataset = True
+                        break
+            except Exception:
+                # ignore listing errors, keep looks_like_dataset False
+                pass
+
+        if looks_like_dataset:
+            print(f"Using local dataset folder: {repo_files}")
+            return repo_files
+        else:
+            print(f"Found '{repo_files}' but it doesn't look like the expected Physionet dataset (no S001/RECORDS found).")
+
+    # 3) Fallback hardcoded path
+    fallback = "/root/autodl-tmp/physionet"
+    if os.path.isdir(fallback):
+        print(f"Using fallback dataset path: {fallback}")
+        return fallback
+
+    # Nothing found -> informative error
+    raise FileNotFoundError(
+        "Physionet dataset not found.\n"
+        "Please either: (a) set the PHYSIONET_DATA_DIR environment variable to the dataset folder,\n"
+        "or (b) place the dataset inside ./files (repo root).\n"
+        f"Checked locations: PHYSIONET_DATA_DIR={env_path}, ./files={repo_files}, fallback={fallback}"
+    )
+
 def run():
     # Get dataset path
-    data_path = "/root/autodl-tmp/physionet"
+    # Resolve dataset path (checks env var PHYSIONET_DATA_DIR, then ./files, then fallback)
+    data_path = get_data_path()
+    print(f"[DEBUG] Resolved data_path={data_path}")
 
     # Create a folder to store the results of the experiment
     results_path = os.getcwd() + "/results"
@@ -357,20 +423,22 @@ def run():
 
     # 10-fold cross-validation
     # for i in range(10):
-        # Set dataset paramters
-        dataset_conf = {'n_classes': 4, 'n_channels': 64, 'data_path': data_path}
-        # Set training hyperparamters
-        train_conf = {'batch_size': 32, 'epochs': 500, 'patience': 100, 'lr': 0.0009,
-                      'LearnCurves': True, 'model': 'DB_ATCNet'}
+    # Set dataset paramters
+    dataset_conf = {'n_classes': 4, 'n_channels': 64, 'data_path': data_path}
+    # Set training hyperparamters
+    train_conf = {'batch_size': 32, 'epochs': 500, 'patience': 100, 'lr': 0.0009,   
+                  'LearnCurves': True, 'model': 'DB_ATCNet'}
 
-        model = getModel(train_conf.get('model'))
-        model.summary()
+    model = getModel(train_conf.get('model'))
+    print("[DEBUG] Built model; printing summary (may be long)...")
+    # model.summary()
 
-        # Train the model
-        train(dataset_conf, train_conf, results_path)
+    # Train the model
+    print("[DEBUG] About to call train()")
+    train(dataset_conf, train_conf, results_path)
 
-        # Evaluate the model based on the weights saved in the '/results' folder
-        # The test function is called at the end of the train function
+    # Evaluate the model based on the weights saved in the '/results' folder
+    # The test function is called at the end of the train function
 
 # %%
 if __name__ == "__main__":
