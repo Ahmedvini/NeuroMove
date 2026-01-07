@@ -11,9 +11,10 @@ from keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.metrics import confusion_matrix, accuracy_score, ConfusionMatrixDisplay
 from sklearn.metrics import cohen_kappa_score
 from sklearn.manifold import TSNE
+from sklearn.model_selection import StratifiedKFold
 
 import models
-from Physionet_DataLoad import load_physionet
+from Physionet_DataLoad import load_physionet, load_physionet_raw, standardize_data
 
 
 # %%
@@ -153,10 +154,10 @@ def train(dataset_conf, train_conf, results_path):
     info = info + 'Subject: {}   best_run: {}   Time: {:.3f} m   '.format(1, best_run + 1,
                                                                           ((out_sub - in_sub) / 60))
     info = info + 'acc: {:.5f}   avg_acc: {:.5f} +- {:.5f}   '.format(acc, np.average(acc),
-                                                                      acc.std())
+                                                                      np.std(acc))
     info = info + 'kappa: {:.5f}   avg_kappa: {:.5f} +- {:.5f}'.format(kappa,
                                                                        np.average(kappa),
-                                                                       kappa.std())
+                                                                       np.std(kappa))
     info = info + '\n----------'
     print(info)
     log_write.write(info + '\n')
@@ -293,7 +294,84 @@ def getModel(model_name):
             n_windows=5,
 
             # Attention (AT) block parameter
-            attention='improved_cbam',  # Options: None, 'mha','mhla', 'cbam', 'se', 'improved_cbam'
+            attention='mha',  # Options: None, 'mha','mhla', 'cbam', 'se', 'improved_cbam'
+
+            # Temporal convolutional Fusion Network block (TCFN) parameters
+            tcn_depth=2,
+            tcn_kernelSize=4,
+            tcn_filters=32,
+            tcn_dropout=0.3,
+            drop2=0.1,
+            drop3=0.15,
+            drop4=0.15,
+
+            tcn_activation='elu',
+        )
+    elif (model_name == 'DB_ATCNet_MultiScale'):
+        # Train using DB-ATCNet with Multi-Scale temporal convolutions
+        model = models.DB_ATCNet_MultiScale(
+            # Dataset parameters
+            n_classes=4,
+            in_chans=64,
+            in_samples=640,
+
+            # Multi-Scale temporal convolution kernel sizes (5 branches)
+            eegn_kernelSizes=(8, 16, 32, 64, 128),  # gamma to delta bands
+            
+            # Other ADBC parameters (same as DB_ATCNet)
+            eegn_F1=16,
+            eegn_D=2,
+            eegn_poolSize=7,
+            eegn_dropout=0.3,
+            drop1=0.35,
+            depth1=1,
+            depth2=2,
+
+            # Sliding window (SW) parameter
+            n_windows=5,
+
+            # Attention (AT) block parameter
+            attention='mha',  # Options: None, 'mha','mhla', 'cbam', 'se', 'improved_cbam'
+
+            # Temporal convolutional Fusion Network block (TCFN) parameters
+            tcn_depth=2,
+            tcn_kernelSize=4,
+            tcn_filters=32,
+            tcn_dropout=0.3,
+            drop2=0.1,
+            drop3=0.15,
+            drop4=0.15,
+
+            tcn_activation='elu',
+        )
+    elif (model_name == 'DB_ATCNet_EfficientMultiScale'):
+        # Train using DB-ATCNet with Efficient Multi-Scale (Dilated Convs + SE Attention)
+        # Inspired by WaveNet, MobileNetV3, and HRNet for parameter-efficient multi-scale
+        model = models.DB_ATCNet_EfficientMultiScale(
+            # Dataset parameters
+            n_classes=4,
+            in_chans=64,
+            in_samples=640,
+
+            # Efficient Multi-Scale parameters
+            dilation_rates=(1, 2, 4),  # Captures beta, alpha, theta bands
+            se_ratio=4,  # Squeeze-Excitation reduction ratio
+            
+            # ADBC parameters (same as DB_ATCNet)
+            eegn_F1=16,
+            eegn_D=2,
+            eegn_kernelSize=32,  # Base kernel size (dilations expand this)
+            eegn_poolSize=7,
+            eegn_dropout=0.3,
+            drop1=0.35,
+            depth1=2,
+            depth2=4,
+
+            # Sliding window (SW) parameter
+            n_windows=5,
+
+            # Attention (AT) block parameter
+            attention='mha',  # Options: None, 'mha','mhla', 'cbam', 'se', 'improved_cbam'
 
             # Temporal convolutional Fusion Network block (TCFN) parameters
             tcn_depth=2,
@@ -421,24 +499,242 @@ def run():
     if not os.path.exists(results_path):
         os.makedirs(results_path)  # Create a new directory if it does not exist
 
-    # 10-fold cross-validation
-    # for i in range(10):
     # Set dataset paramters
     dataset_conf = {'n_classes': 4, 'n_channels': 64, 'data_path': data_path}
     # Set training hyperparamters
-    train_conf = {'batch_size': 32, 'epochs': 500, 'patience': 100, 'lr': 0.0009,   
-                  'LearnCurves': True, 'model': 'DB_ATCNet'}
+    train_conf = {
+        'batch_size': 32, 
+        'epochs': 500, 
+        'patience': 100, 
+        'lr': 0.0009,   
+        'LearnCurves': True, 
+        'model': 'DB_ATCNet',
+        'n_folds': 5  # Number of folds for cross-validation
+    }
 
-    model = getModel(train_conf.get('model'))
-    print("[DEBUG] Built model; printing summary (may be long)...")
-    # model.summary()
+    # Train the model using stratified k-fold cross-validation
+    print("[DEBUG] Starting Stratified K-Fold Cross-Validation")
+    train_kfold(dataset_conf, train_conf, results_path)
 
-    # Train the model
-    print("[DEBUG] About to call train()")
-    train(dataset_conf, train_conf, results_path)
 
-    # Evaluate the model based on the weights saved in the '/results' folder
-    # The test function is called at the end of the train function
+def train_kfold(dataset_conf, train_conf, results_path):
+    """
+    Train model using stratified k-fold cross-validation.
+    This ensures class distribution is preserved in each fold.
+    """
+    print("[DEBUG] Entered train_kfold()")
+    in_exp = time.time()
+    
+    # Create log files
+    log_write = open(results_path + "/log_kfold.txt", "w")
+    
+    # Get dataset paramters
+    data_path = dataset_conf.get('data_path')
+    n_classes = dataset_conf.get('n_classes')
+    
+    # Get training hyperparamters
+    batch_size = train_conf.get('batch_size')
+    epochs = train_conf.get('epochs')
+    patience = train_conf.get('patience')
+    lr = train_conf.get('lr')
+    LearnCurves = train_conf.get('LearnCurves')
+    model_name = train_conf.get('model')
+    n_folds = train_conf.get('n_folds', 5)
+    
+    print(f'Training model: {model_name} with {n_folds}-fold stratified cross-validation')
+    log_write.write(f'Model: {model_name}, {n_folds}-fold stratified cross-validation\n')
+    log_write.write('='*80 + '\n')
+    
+    # Load all data (without train/test split)
+    print("[DEBUG] Loading all data...")
+    X_all, y_all_onehot, y_labels, n_channels = load_physionet_raw(data_path)
+    print(f"[DEBUG] Data loaded: X_all={X_all.shape}, y_all={y_all_onehot.shape}")
+    
+    # Initialize stratified k-fold
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    
+    # Store metrics for each fold
+    fold_accuracies = []
+    fold_kappas = []
+    fold_histories = []
+    
+    # Iterate through folds
+    for fold, (train_idx, test_idx) in enumerate(skf.split(X_all, y_labels), 1):
+        print(f"\n{'='*60}")
+        print(f"FOLD {fold}/{n_folds}")
+        print(f"{'='*60}")
+        in_fold = time.time()
+        
+        # Split data for this fold
+        X_train, X_test = X_all[train_idx], X_all[test_idx]
+        y_train_onehot, y_test_onehot = y_all_onehot[train_idx], y_all_onehot[test_idx]
+        
+        # Standardize data (fit on train, transform both)
+        X_train_scaled, X_test_scaled = standardize_data(
+            X_train.copy(), X_test.copy(), n_channels
+        )
+        
+        print(f"Train size: {X_train_scaled.shape[0]}, Test size: {X_test_scaled.shape[0]}")
+        
+        # Check class distribution
+        train_dist = np.bincount(y_labels[train_idx])
+        test_dist = np.bincount(y_labels[test_idx])
+        print(f"Train class distribution: {train_dist}")
+        print(f"Test class distribution: {test_dist}")
+        
+        # Create folder for this fold's saved models
+        fold_path = results_path + f'/fold_{fold}'
+        if not os.path.exists(fold_path):
+            os.makedirs(fold_path)
+        filepath = fold_path + '/best_model.weights.h5'
+        
+        # Create a fresh model for each fold
+        model = getModel(model_name)
+        model.compile(
+            loss=categorical_crossentropy, 
+            optimizer=Adam(learning_rate=lr), 
+            metrics=['accuracy']
+        )
+        
+        # Callbacks
+        callbacks = [
+            ModelCheckpoint(filepath, monitor='val_accuracy', verbose=1,
+                          save_best_only=True, save_weights_only=True, mode='max'),
+            EarlyStopping(monitor='val_accuracy', verbose=1, mode='max', patience=patience)
+        ]
+        
+        # Train
+        history = model.fit(
+            X_train_scaled, y_train_onehot, 
+            validation_data=(X_test_scaled, y_test_onehot),
+            epochs=epochs, batch_size=batch_size, 
+            callbacks=callbacks, verbose=1
+        )
+        fold_histories.append(history)
+        
+        # Load best weights and evaluate
+        model.load_weights(filepath)
+        y_pred = model.predict(X_test_scaled).argmax(axis=-1)
+        labels = y_test_onehot.argmax(axis=-1)
+        
+        acc = accuracy_score(labels, y_pred)
+        kappa = cohen_kappa_score(labels, y_pred)
+        
+        fold_accuracies.append(acc)
+        fold_kappas.append(kappa)
+        
+        out_fold = time.time()
+        fold_time = (out_fold - in_fold) / 60
+        
+        # Log fold results
+        info = f'Fold {fold}: Accuracy={acc:.5f}, Kappa={kappa:.5f}, Time={fold_time:.2f}min'
+        print(info)
+        log_write.write(info + '\n')
+        
+        # Generate and save confusion matrix for this fold
+        cf_matrix = confusion_matrix(labels, y_pred, normalize='pred')
+        plt.figure(figsize=(8, 6))
+        display_labels = ['Both feet', 'Left fist', 'Both fists', 'Right fist']
+        disp = ConfusionMatrixDisplay(confusion_matrix=cf_matrix, display_labels=display_labels)
+        disp.plot()
+        disp.ax_.set_xticklabels(display_labels, rotation=12)
+        plt.title(f'Confusion Matrix - Fold {fold}')
+        plt.savefig(fold_path + '/confusion_matrix.png')
+        plt.close()
+        
+        # Plot learning curves for this fold
+        if LearnCurves:
+            plt.figure(figsize=(12, 4))
+            
+            plt.subplot(1, 2, 1)
+            plt.plot(history.history['accuracy'], label='Train')
+            plt.plot(history.history['val_accuracy'], label='Validation')
+            plt.title(f'Fold {fold} - Accuracy')
+            plt.xlabel('Epoch')
+            plt.ylabel('Accuracy')
+            plt.legend()
+            
+            plt.subplot(1, 2, 2)
+            plt.plot(history.history['loss'], label='Train')
+            plt.plot(history.history['val_loss'], label='Validation')
+            plt.title(f'Fold {fold} - Loss')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.legend()
+            
+            plt.tight_layout()
+            plt.savefig(fold_path + '/learning_curves.png')
+            plt.close()
+        
+        # Clear session to free memory
+        keras.backend.clear_session()
+    
+    # Calculate and report final results
+    out_exp = time.time()
+    total_time = (out_exp - in_exp) / 60
+    
+    print(f"\n{'='*60}")
+    print("CROSS-VALIDATION RESULTS")
+    print(f"{'='*60}")
+    
+    avg_acc = np.mean(fold_accuracies)
+    std_acc = np.std(fold_accuracies)
+    avg_kappa = np.mean(fold_kappas)
+    std_kappa = np.std(fold_kappas)
+    
+    results_summary = f"""
+    Model: {model_name}
+    Number of Folds: {n_folds}
+    
+    Per-fold Accuracies: {[f'{a:.4f}' for a in fold_accuracies]}
+    Per-fold Kappas: {[f'{k:.4f}' for k in fold_kappas]}
+    
+    Average Accuracy: {avg_acc:.5f} ± {std_acc:.5f}
+    Average Kappa: {avg_kappa:.5f} ± {std_kappa:.5f}
+    
+    Total Training Time: {total_time:.2f} minutes ({total_time/60:.2f} hours)
+    """
+    
+    print(results_summary)
+    log_write.write('\n' + '='*80 + '\n')
+    log_write.write('FINAL RESULTS\n')
+    log_write.write(results_summary)
+    log_write.close()
+    
+    # Save all fold metrics
+    np.savez(
+        results_path + '/kfold_results.npz',
+        accuracies=np.array(fold_accuracies),
+        kappas=np.array(fold_kappas),
+        avg_acc=avg_acc,
+        std_acc=std_acc,
+        avg_kappa=avg_kappa,
+        std_kappa=std_kappa
+    )
+    
+    # Plot summary bar chart
+    plt.figure(figsize=(10, 5))
+    x = np.arange(n_folds)
+    width = 0.35
+    
+    plt.bar(x - width/2, fold_accuracies, width, label='Accuracy', color='steelblue')
+    plt.bar(x + width/2, fold_kappas, width, label='Kappa', color='coral')
+    
+    plt.axhline(y=avg_acc, color='steelblue', linestyle='--', label=f'Avg Acc: {avg_acc:.3f}')
+    plt.axhline(y=avg_kappa, color='coral', linestyle='--', label=f'Avg Kappa: {avg_kappa:.3f}')
+    
+    plt.xlabel('Fold')
+    plt.ylabel('Score')
+    plt.title(f'{model_name} - {n_folds}-Fold Cross-Validation Results')
+    plt.xticks(x, [f'Fold {i+1}' for i in range(n_folds)])
+    plt.legend(loc='lower right')
+    plt.ylim([0, 1])
+    plt.tight_layout()
+    plt.savefig(results_path + '/kfold_summary.png', dpi=150)
+    plt.close()
+    
+    print(f"\nResults saved to: {results_path}")
+
 
 # %%
 if __name__ == "__main__":

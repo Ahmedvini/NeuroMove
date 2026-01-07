@@ -181,3 +181,34 @@ def load_physionet(path):
     print(x_train_scaled_raw.shape, x_test_valid_scaled_raw.shape)
     return x_train_scaled_raw,y_train_raw,x_test_valid_scaled_raw,y_valid_test_raw
 
+
+def load_physionet_raw(path):
+    """Load all Physionet data without train/test split for k-fold cross-validation.
+    
+    Returns:
+        data_x: numpy array of shape (N_trials, 1, N_channels, N_timepoints)
+        y_one_hot: one-hot encoded labels
+        y_labels: raw class labels (integers) for stratification
+    """
+    exclude = [38, 88, 89, 92, 100, 104]
+    subjects = [n for n in np.arange(1, 110) if n not in exclude]
+
+    xs = list()
+    ys = list()
+    for subject in subjects:
+        x, y, ch_names = load_subject_data(subject, path, True)
+        print(f"Subject {subject}: {x.shape}")
+        xs.append(x)
+        ys.append(y)
+    data_x = np.concatenate(xs)
+    data_y = np.concatenate(ys)
+
+    N_tr, N_ch, _ = data_x.shape
+    data_x = data_x[:, :, :640].reshape(N_tr, 1, N_ch, -1)
+    y_one_hot = to_one_hot(data_y, by_sub=False)
+    
+    # Get integer labels for stratification
+    y_labels = np.argmax(y_one_hot, axis=1)
+
+    print(f"Total data shape: {data_x.shape}, Labels shape: {y_one_hot.shape}")
+    return data_x, y_one_hot, y_labels, N_ch
