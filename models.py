@@ -25,8 +25,8 @@ def DB_ATCNet(n_classes, in_chans=22, in_samples=1125, n_windows=3, attention=No
     block1 = ADBC(input_layer=input_2, F1=eegn_F1, D=eegn_D,
                             kernLength=eegn_kernelSize, poolSize=eegn_poolSize,
                             in_chans=in_chans, dropout=eegn_dropout,drop1=drop1,depth1=depth1,depth2=depth2)
-    # Improved CBAM (was ECA2)
-    block1 = improved_cbam_block(block1)
+    # ECA2
+    block1 = eca_attention(block1)
     block1 = Lambda(lambda x: x[:, :, -1, :])(block1)
 
     # Sliding window
@@ -73,7 +73,7 @@ def ADBC(input_layer, F1=4, kernLength=64, poolSize=8, D=2, in_chans=22, dropout
     block1 = Conv2D(F1, (kernLength, 1), padding='same', data_format='channels_last', use_bias=False)(input_layer)
     block1 = BatchNormalization(axis=-1)(block1)
 
-    # Improved CBAM (was ECA1)
+    # ECA1
     block1 = eca_attention(block1)
 
 
