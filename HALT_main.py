@@ -3,6 +3,8 @@ import os
 os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir=/home/ezzo/anaconda3/lib/python3.13/site-packages/nvidia/cuda_nvcc'
 import time
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from tensorflow import keras
 from keras.optimizers import Adam
@@ -19,6 +21,16 @@ standardize_data = HALT_DataLoad.standardize_data
 load_halt_subject_by_session = HALT_DataLoad.load_halt_subject_by_session
 get_available_subjects = HALT_DataLoad.get_available_subjects
 
+# ── Channel Ablation Configuration ──────────────────────────────────────────
+# Channel names in the order used by HALT_DataLoad (19 EEG leads)
+CHANNEL_NAMES = ['Fp1','Fp2','F3','F4','C3','C4','P3','P4','O1','O2',
+                  'F7','F8','T3','T4','T5','T6','Fz','Cz','Pz']
+
+# Cross-subject ranked order (based on the mean-std consistency metric)
+RANKED_CHANNELS = ['T5','T3','Fp2','Fz','Pz','F7','C4','T6','O2','F8',
+                   'Cz','F4','F3','T4','P3','C3','Fp1','O1','P4']
+RANKED_INDICES = [CHANNEL_NAMES.index(ch) for ch in RANKED_CHANNELS]
+# ────────────────────────────────────────────────────────────────────────────
 
 # %%
 def plot_confusion(cf_matrix, labels, title, out_path):
@@ -49,14 +61,14 @@ def plot_learning_curves(history, title, out_path):
     plt.close()
 
 
-def getModel(model_name):
+def getModel(model_name, n_chans=19):
     # Select the model
     if (model_name == 'DB_ATCNet'):
         # Train using the proposed model (ATCNet): https://doi.org/10.1109/TII.2022.3197419
         model = models.DB_ATCNet(
             # Dataset parameters
             n_classes=2,
-            in_chans=19,
+            in_chans=n_chans,
             in_samples=600,
 
             # Attention Dual-branch Convolution block (ADBC) parameters
@@ -91,7 +103,7 @@ def getModel(model_name):
         model = models.ATCNet(
             # Dataset parameters
             n_classes=2,
-            in_chans=19,
+            in_chans=n_chans,
             in_samples=600,
             # Sliding window (SW) parameter
             n_windows=5,
@@ -121,13 +133,13 @@ def getModel(model_name):
         model = models.EEGNet_classifier(n_classes=2)
     elif (model_name == 'EEGNeX'):
         # Train using EEGNeX: https://arxiv.org/abs/2207.12369
-        model = models.EEGNeX_8_32(n_timesteps=600, n_features=19, n_outputs=2)
+        model = models.EEGNeX_8_32(n_timesteps=600, n_features=n_chans, n_outputs=2)
     elif (model_name == 'DeepConvNet'):
         # Train using DeepConvNet: https://doi.org/10.1002/hbm.23730
-        model = models.DeepConvNet(nb_classes=2, Chans=19, Samples=600)
+        model = models.DeepConvNet(nb_classes=2, Chans=n_chans, Samples=600)
     elif (model_name == 'ShallowConvNet'):
         # Train using ShallowConvNet: https://doi.org/10.1002/hbm.23730
-        model = models.ShallowConvNet(nb_classes=2, Chans=19, Samples=600)
+        model = models.ShallowConvNet(nb_classes=2, Chans=n_chans, Samples=600)
     else:
         raise Exception("'{}' model is not supported yet!".format(model_name))
 
@@ -217,12 +229,16 @@ def run():
     train_subject_dependent(dataset_conf, train_conf, results_path)
 
 
-def train_subject_dependent(dataset_conf, train_conf, results_path):
+def train_subject_dependent(dataset_conf, train_conf, results_path,
+                             channel_indices=None):
     """
     Subject-dependent training: train and evaluate each subject independently
     using leave-one-session-out cross-validation.
     Each fold holds out one entire recording session to prevent
     temporal autocorrelation leakage between train and test.
+
+    channel_indices: list of int, optional. If provided, only these channel
+        indices (into the 19-channel array) are kept. None = use all 19.
     """
     print("[DEBUG] Entered train_subject_dependent()")
     in_exp = time.time()
@@ -268,6 +284,14 @@ def train_subject_dependent(dataset_conf, train_conf, results_path):
             msg = f'Subject {subj}: no data found, skipping.\n'
             print(msg)
             continue
+
+        # ── Channel subset selection ──────────────────────────────────────
+        if channel_indices is not None:
+            X_all = X_all[:, :, channel_indices, :]   # (N, 1, n_ch, 600)
+            n_channels = len(channel_indices)
+            ch_names = [CHANNEL_NAMES[i] for i in channel_indices]
+            print(f"  Using {n_channels} channels: {ch_names}")
+        # ─────────────────────────────────────────────────────────────────
 
         n_sessions = len(np.unique(session_ids))
         subj_log = open(os.path.join(subj_path, 'subject_summary.txt'), 'w')
@@ -322,7 +346,7 @@ def train_subject_dependent(dataset_conf, train_conf, results_path):
             weights_path = os.path.join(fold_path, 'best_model.weights.h5')
 
             # Build & compile a fresh model
-            model = getModel(model_name)
+            model = getModel(model_name, n_chans=n_channels)
             model.compile(
                 loss=categorical_crossentropy,
                 optimizer=Adam(learning_rate=lr),
@@ -377,8 +401,10 @@ def train_subject_dependent(dataset_conf, train_conf, results_path):
                     os.path.join(fold_path, 'learning_curves.png'),
                 )
 
-            # Free GPU memory
+            # Free GPU and System memory
             keras.backend.clear_session()
+            import gc
+            gc.collect()
 
         # ---- Subject summary ----
         out_subj = time.time()
@@ -435,6 +461,8 @@ def train_subject_dependent(dataset_conf, train_conf, results_path):
                          f'Kappa={avg_kappa:.5f}±{std_kappa:.5f}  '
                          f'Time={subj_time:.2f}min\n')
         global_log.flush()
+
+
 
     # ---- Global summary ----
     out_exp = time.time()
@@ -701,6 +729,149 @@ def train_kfold(dataset_conf, train_conf, results_path):
     print(f"\nResults saved to: {results_path}")
 
 
+def run_ablation(channel_counts=(3, 5, 7, 10)):
+    """Ablation study: retrain DB-ATCNet for each channel subset
+    and compare accuracy vs the 19-channel baseline.
+
+    Results are saved to results/ablation/<config_name>/
+    A final comparison table is printed and saved to results/ablation/summary.txt
+    """
+    data_path = get_data_path()
+    ablation_root = os.path.join(os.getcwd(), 'results', 'ablation')
+    os.makedirs(ablation_root, exist_ok=True)
+
+    train_conf = {
+        'batch_size': 32,
+        'epochs': 500,
+        'patience': 50,
+        'lr': 0.0009,
+        'LearnCurves': True,
+        'model': 'DB_ATCNet',
+    }
+    dataset_conf = {'n_classes': 2, 'n_channels': 19, 'data_path': data_path}
+
+    # Store per-config per-subject averages for the comparison table
+    # {config_name: {subject: avg_acc}}
+    all_results = {}
+
+    configs_to_run = {}
+    for count in channel_counts:
+        configs_to_run[f'top_{count}'] = RANKED_INDICES[:count]
+
+    for config_name, ch_indices in configs_to_run.items():
+        n_ch = 19 if ch_indices is None else len(ch_indices)
+        ch_label = 'all 19' if ch_indices is None else \
+                   str([CHANNEL_NAMES[i] for i in ch_indices])
+        print(f"\n{'#'*70}")
+        print(f"  ABLATION CONFIG: {config_name}  ({n_ch} channels)")
+        print(f"  Channels: {ch_label}")
+        print(f"{'#'*70}")
+
+        config_path = os.path.join(ablation_root, config_name)
+        os.makedirs(config_path, exist_ok=True)
+
+        train_subject_dependent(
+            dataset_conf, train_conf, config_path,
+            channel_indices=ch_indices
+        )
+
+        # Read back the per-subject accuracies from the saved .npz files
+        config_accs = {}
+        for subj_dir in sorted(os.listdir(config_path)):
+            npz_path = os.path.join(config_path, subj_dir, 'loso_results.npz')
+            if os.path.exists(npz_path):
+                data = np.load(npz_path)
+                config_accs[subj_dir.replace('subject_', '')] = float(data['avg_acc'])
+        all_results[config_name] = config_accs
+
+        # ---- Free RAM explicitly before next configuration ----
+        import gc
+        keras.backend.clear_session()
+        gc.collect()
+
+    # ── Print comparison table ────────────────────────────────────────────────
+    subjects = sorted(set(s for res in all_results.values() for s in res))
+    config_names = list(all_results.keys())
+    header_cols = ['Subject'] + config_names + ['Best config']
+    col_w = 14
+
+    lines = []
+    lines.append('\n' + '='*80)
+    lines.append('ABLATION STUDY RESULTS — Accuracy per subject')
+    lines.append('='*80)
+    lines.append('  '.join(h.ljust(col_w) for h in header_cols))
+    lines.append('-'*80)
+
+    grand_avgs = {cn: [] for cn in config_names}
+    for subj in subjects:
+        row = [subj.ljust(col_w)]
+        accs = {}
+        for cn in config_names:
+            v = all_results[cn].get(subj, None)
+            accs[cn] = v
+            row.append((f'{v:.4f}' if v is not None else 'N/A').ljust(col_w))
+            if v is not None:
+                grand_avgs[cn].append(v)
+        best = max((cn for cn in config_names if accs[cn] is not None),
+                   key=lambda cn: accs[cn], default='N/A')
+        row.append(best)
+        lines.append('  '.join(row))
+
+    lines.append('-'*80)
+    avg_row = ['MEAN'.ljust(col_w)]
+    for cn in config_names:
+        v = np.mean(grand_avgs[cn]) if grand_avgs[cn] else float('nan')
+        avg_row.append(f'{v:.4f}'.ljust(col_w))
+    avg_row.append('')
+    lines.append('  '.join(avg_row))
+    lines.append('='*80)
+
+    # Accuracy drop from 19-ch baseline (if baseline was run)
+    if 'full_19ch' in all_results:
+        lines.append('\nAccuracy drop vs full 19-channel baseline:')
+        baseline_avgs = {s: all_results['full_19ch'].get(s, None) for s in subjects}
+    for cn in config_names:
+        if cn == 'full_19ch':
+            continue
+        drops = []
+        for s in subjects:
+            base = baseline_avgs.get(s)
+            abl = all_results[cn].get(s)
+            if base is not None and abl is not None:
+                drops.append(abl - base)
+        mean_drop = np.mean(drops) if drops else float('nan')
+        sign = '+' if mean_drop >= 0 else ''
+        lines.append(f'  {cn:<12}: {sign}{mean_drop:.4f} ({sign}{mean_drop*100:.2f}%)')
+
+    summary = '\n'.join(lines)
+    print(summary)
+
+    summary_path = os.path.join(ablation_root, 'ablation_summary.txt')
+    with open(summary_path, 'w') as f:
+        f.write(summary)
+    print(f"\n  Summary saved to: {summary_path}")
+
+
 # %%
 if __name__ == "__main__":
-    run()
+    import argparse
+    parser = argparse.ArgumentParser(description="Run DB-ATCNet Training on HALT Dataset")
+    parser.add_argument("--single-run", action="store_true", 
+                        help="Run standard 19-channel training (Baseline)")
+    parser.add_argument("--ablation", action="store_true", 
+                        help="Run multi-channel ablation study")
+    parser.add_argument("--ablation-channels", type=int, nargs="+", default=[3, 5, 7, 10],
+                        help="List of channel counts for ablation (e.g. --ablation-channels 3 5 7 10)")
+    args = parser.parse_args()
+
+    if args.ablation:
+        run_ablation(channel_counts=args.ablation_channels)
+    elif args.single_run:
+        run()
+    else:
+        print("Please specify a run mode. Examples:")
+        print("  python HALT_main.py --single-run")
+        print("  python HALT_main.py --ablation")
+        print("  python HALT_main.py --ablation --ablation-channels 2 4 8 16")
+        print("")
+        parser.print_help()

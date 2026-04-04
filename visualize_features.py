@@ -32,7 +32,8 @@ in_samples = 600
 data_path = "./HALT"
 results_dir = "./results"
 vis_base_dir = os.path.join(results_dir, "visualizations")
-TARGET_SUBJECTS = ['A', 'B', 'C', 'E', 'F']
+TARGET_SUBJECTS = [s for s in ['A', 'B', 'C', 'E', 'F', 'G', 'J', 'K']
+                   if s not in HALT_DataLoad.EXCLUDED_SUBJECTS]
 
 # Correct labels from HALT_DataLoad (cls 2=Right Hand, cls 4=Left Leg)
 # Mapping: 2 -> 0, 4 -> 1
@@ -41,7 +42,12 @@ class_names = ['Right Hand', 'Left Leg']
 channel_names = ['Fp1','Fp2','F3','F4','C3','C4','P3','P4','O1','O2','F7','F8','T3','T4','T5','T6','Fz','Cz','Pz']
 
 def load_subject_data(subject_id, path):
-    """Load data for a specific subject, standardize all trials, and return the full set."""
+    """Load data for a specific subject, standardize all trials, and return the full set.
+
+    Normalization: StandardScaler fit on the first 80% of trials (train portion only),
+    then applied to all trials. This matches the training procedure in HALT_main.py
+    and avoids leaking test statistics into the scaler.
+    """
     x_raw, y_raw = HALT_DataLoad.load_halt_subject_data(subject_id, path)
     if x_raw.size == 0:
         raise ValueError(f"No HALT data found for Subject {subject_id}.")
@@ -49,13 +55,38 @@ def load_subject_data(subject_id, path):
     x_raw = x_raw.reshape(x_raw.shape[0], 1, x_raw.shape[1], -1)
     y_one_hot = HALT_DataLoad.to_one_hot(y_raw, by_sub=False)
 
-    # Standardize entire subject set (fit per-channel on full data)
+    # Fit per-channel scaler on first 80% of trials only (matches training fold)
+    n_train = int(0.8 * x_raw.shape[0])
     for j in range(x_raw.shape[2]):
         scaler = StandardScaler()
-        scaler.fit(x_raw[:, 0, j, :])
-        x_raw[:, 0, j, :] = scaler.transform(x_raw[:, 0, j, :])
+        scaler.fit(x_raw[:n_train, 0, j, :])         # fit on train portion only
+        x_raw[:, 0, j, :] = scaler.transform(x_raw[:, 0, j, :])  # apply to all
 
     return x_raw, y_one_hot
+
+
+def get_depthwise_channel_importance(model):
+    """Extract per-channel importance from DepthwiseConv2D weights.
+
+    The DepthwiseConv2D weight W has shape (1, 19, 1, depth_mult).
+    Importance per channel = mean of |W| over the depth multiplier dimension.
+    This is purely weight-based — no data or normalization needed.
+
+    Returns: np.ndarray of shape (n_channels,) with non-negative importance scores.
+    """
+    importances = []
+    # Iterate top-level layers AND layers inside any sub-models
+    for layer in model.layers:
+        sub_layers = layer.layers if isinstance(layer, keras.Model) else [layer]
+        for sub_layer in sub_layers:
+            if isinstance(sub_layer, keras.layers.DepthwiseConv2D):
+                W = sub_layer.get_weights()[0]  # shape: (1, n_ch, 1, depth_mult)
+                ch_imp = np.mean(np.abs(W[0, :, 0, :]), axis=-1)  # (n_ch,)
+                importances.append(ch_imp)
+    if not importances:
+        return None
+    # If multiple DepthwiseConv2D layers, average across them
+    return np.mean(importances, axis=0)
 
 # 4. Helper Function: Plot Filters (Kernels & Channels)
 def plot_filters(layer, layer_name, detailed_dir):
@@ -382,50 +413,49 @@ for TARGET_SUBJECT in TARGET_SUBJECTS:
             cbar = fig.colorbar(im3, cax=cbar_ax)
             cbar.set_label('Activation Strength', rotation=270, labelpad=15)
 
-        plt.tight_layout(rect=[0, 0.03, 0.9, 0.96])
+        fig.subplots_adjust(left=0.06, right=0.90, top=0.93, bottom=0.05, hspace=0.4)
         plt.savefig(os.path.join(levels_dir, "summary_overview.png"), dpi=300)
         plt.close()
 
-        # 5b. Class-Specific Spatial Channel Importance Bar Chart
-        print(f"[INFO] Generating Class-Specific Spatial Importance for {class_name}...")
-        total_importance = np.zeros(19)
-        spatial_layers_found = 0
-        current_input_act = None
-        
-        for i, layer in enumerate(model.layers):
-            if not hasattr(layer, 'output'): continue
-            act = preds[i] if isinstance(preds, list) else preds
-            if len(act.shape) == 4 and act.shape[2] == 19:
-                current_input_act = act[0]
-                
-            if isinstance(layer, keras.layers.DepthwiseConv2D):
-                W = layer.get_weights()[0]
-                if current_input_act is not None:
-                    act_4d = np.expand_dims(current_input_act, axis=-1)
-                    importance_map = np.abs(act_4d * W)
-                    channel_imp = np.mean(importance_map, axis=0)
-                    channel_imp = np.sum(channel_imp, axis=(1, 2))
-                    total_importance += channel_imp
-                    spatial_layers_found += 1
-
-        if spatial_layers_found > 0:
-            total_importance /= spatial_layers_found
-            fig_sp, ax_sp = plt.subplots(figsize=(12, 6))
-            bars = ax_sp.bar(current_channel_names, total_importance, color='tomato', edgecolor='white')
-            ax_sp.set_title(f'Topographical Channel Importance: {class_name}', fontsize=16, fontweight='bold')
-            ax_sp.set_xlabel('EEG Channel Sensors', fontsize=12)
-            ax_sp.set_ylabel('Aggregated Contribution Score', fontsize=12)
-            ax_sp.grid(axis='y', linestyle='--', alpha=0.5)
-            top_indices = np.argsort(total_importance)[-3:][::-1]
-            for idx_top in top_indices:
-                bars[idx_top].set_color('gold')
-                bars[idx_top].set_edgecolor('black')
-                bars[idx_top].set_linewidth(2)
-            for i_bar, v in enumerate(total_importance):
-                ax_sp.text(i_bar, v, f"{v:.2f}", ha='center', va='bottom', fontsize=9)
-            plt.tight_layout()
-            plt.savefig(os.path.join(channels_dir, "spatial_importance.png"), dpi=300)
-            plt.close()
+        # 5b. Per-Subject Channel Importance (weight-only, class-independent)
+        # NOTE: DepthwiseConv2D weights encode spatial channel weighting directly.
+        # This is class-independent (same weights for both classes) but subject-specific
+        # because each subject has its own trained model.
+        if class_name == list(current_sample_indices.keys())[0]:  # plot once per subject
+            print(f"[INFO] Generating Weight-Only Channel Importance for Subject {TARGET_SUBJECT}...")
+            subj_importance = get_depthwise_channel_importance(model)
+            if subj_importance is not None:
+                fig_sp, ax_sp = plt.subplots(figsize=(12, 6))
+                bars = ax_sp.bar(current_channel_names, subj_importance, color='tomato', edgecolor='white')
+                ax_sp.set_title(
+                    f'Channel Importance (Weight-Only): Subject {TARGET_SUBJECT}\n'
+                    f'DepthwiseConv2D |W| averaged over depth multiplier',
+                    fontsize=14, fontweight='bold'
+                )
+                ax_sp.set_xlabel('EEG Channel', fontsize=12)
+                ax_sp.set_ylabel('Mean |Weight| (higher = more important)', fontsize=12)
+                ax_sp.grid(axis='y', linestyle='--', alpha=0.5)
+                # Highlight top 5 channels
+                top_indices = np.argsort(subj_importance)[-5:][::-1]
+                for idx_top in top_indices:
+                    bars[idx_top].set_color('gold')
+                    bars[idx_top].set_edgecolor('black')
+                    bars[idx_top].set_linewidth(2)
+                for i_bar, v in enumerate(subj_importance):
+                    ax_sp.text(i_bar, v, f"{v:.3f}", ha='center', va='bottom', fontsize=8)
+                ranked = sorted(zip(current_channel_names, subj_importance), key=lambda x: -x[1])
+                ax_sp.set_title(
+                    ax_sp.get_title() + f'\nTop 5: {[r[0] for r in ranked[:5]]}',
+                    fontsize=13
+                )
+                plt.tight_layout()
+                # Save in both per-subject vis_dir and channels_dir for easy access
+                plt.savefig(os.path.join(vis_dir, "channel_importance.png"), dpi=300)
+                plt.savefig(os.path.join(channels_dir, "spatial_importance.png"), dpi=300)
+                plt.close()
+                print(f"  Top 5 channels for Subject {TARGET_SUBJECT}: {[r[0] for r in ranked[:5]]}")
+            else:
+                print(f"[WARNING] No DepthwiseConv2D layer found for Subject {TARGET_SUBJECT}.")
 
         # 5c. Temporal Kernels Presentation Plot
         print(f"[INFO] Generating Temporal Kernels for {class_name}...")
@@ -520,9 +550,181 @@ for TARGET_SUBJECT in TARGET_SUBJECTS:
             plt.savefig(os.path.join(attention_dir, "mha_attention_scores.png"), dpi=300, bbox_inches='tight')
             plt.close()
 
+# ============================================================
+# CROSS-SUBJECT CHANNEL IMPORTANCE ANALYSIS
+# Goal: Find the channels that are consistently important
+# across ALL subjects — these are the ones to keep in the
+# minimal prototype.
+# ============================================================
+print("\n" + "="*60)
+print("  CROSS-SUBJECT CHANNEL IMPORTANCE ANALYSIS")
+print("="*60)
 
+all_subjects = HALT_DataLoad.get_available_subjects(data_path)
+per_subject_importance = {}  # subject -> np.ndarray (19,)
 
+for subj in all_subjects:
+    subj_dir = os.path.join(results_dir, f"subject_{subj}")
+    if not os.path.exists(subj_dir):
+        print(f"  [SKIP] No results folder for Subject {subj}")
+        continue
 
-print("[INFO] Visualization script completed successfully.")
-print(f"       Exhaustive analysis saved to: {detailed_dir}")
-print(f"       Presentation summary saved to: {presentation_dir}")
+    # Find best_model.weights.h5 in any fold subfolder
+    weights_path = None
+    for folder in sorted(os.listdir(subj_dir)):
+        candidate = os.path.join(subj_dir, folder, "best_model.weights.h5")
+        if os.path.exists(candidate):
+            weights_path = candidate
+            break
+    if weights_path is None:
+        print(f"  [SKIP] No weights found for Subject {subj}")
+        continue
+
+    # Build a fresh model and load this subject's weights
+    tmp_model = DB_ATCNet(
+        n_classes=n_classes, in_chans=in_chans, in_samples=in_samples,
+        eegn_F1=16, eegn_D=2, eegn_kernelSize=64, eegn_poolSize=7, eegn_dropout=0.3,
+        drop1=0.35, depth1=2, depth2=4, n_windows=5, attention='mha',
+        tcn_depth=2, tcn_kernelSize=4, tcn_filters=32, tcn_dropout=0.3,
+        drop2=0.1, drop3=0.15, drop4=0.15, tcn_activation='elu'
+    )
+    tmp_model.load_weights(weights_path)
+
+    imp = get_depthwise_channel_importance(tmp_model)
+    if imp is not None:
+        per_subject_importance[subj] = imp
+        ranked = sorted(zip(channel_names, imp), key=lambda x: -x[1])
+        print(f"  Subject {subj}: top 5 = {[r[0] for r in ranked[:5]]}")
+    keras.backend.clear_session()
+
+if per_subject_importance:
+    importance_matrix = np.stack(list(per_subject_importance.values()), axis=0)  # (n_subj, 19)
+    mean_importance  = np.mean(importance_matrix, axis=0)   # (19,)
+    std_importance   = np.std(importance_matrix,  axis=0)   # (19,)
+
+    # Rank channels by pure mean importance
+    ranked_channels_mean = sorted(
+        zip(channel_names, mean_importance, std_importance),
+        key=lambda x: -x[1]    # sort by mean descending
+    )
+
+    # Rank channels by mean − std (lower bound) to favour cross-subject consistency.
+    ranked_channels_consistency = sorted(
+        zip(channel_names, mean_importance, std_importance),
+        key=lambda x: -(x[1] - x[2])    # sort by mean - std descending
+    )
+
+    print("\n" + "="*60)
+    print("  CHANNEL RANKING (mean − std, cross-subject consistency)")
+    print("  Higher score = consistently important across all subjects")
+    print("="*60)
+    print(f"  {'Rank':<5} {'Channel':<10} {'Mean':<10} {'Std':<10} {'Score=M-S':<12}")
+    print("  " + "-"*50)
+    for rank, (ch, mean, std) in enumerate(ranked_channels_consistency, 1):
+        score = mean - std
+        bar = '█' * int(score / (ranked_channels_consistency[0][1] - ranked_channels_consistency[0][2]) * 20)
+        print(f"  {rank:<5} {ch:<10} {mean:<10.4f} {std:<10.4f} {score:<12.4f}  {bar}")
+
+    # ---- Plot 1: Mean importance bar chart ----
+    fig, ax = plt.subplots(figsize=(14, 6))
+    ch_ordered_mean = [r[0] for r in ranked_channels_mean]
+    mean_ordered_mean = [r[1] for r in ranked_channels_mean]
+    std_ordered_mean  = [r[2] for r in ranked_channels_mean]
+
+    colors_mean = ['gold' if i < 5 else ('tomato' if i < 10 else 'steelblue')
+                   for i in range(len(ch_ordered_mean))]
+    bars = ax.bar(ch_ordered_mean, mean_ordered_mean, color=colors_mean, edgecolor='white',
+                  yerr=std_ordered_mean, capsize=4, error_kw={'ecolor': 'white', 'alpha': 0.6})
+    ax.set_title(
+        f'Cross-Subject Channel Importance — Mean Weights ({len(per_subject_importance)} subjects)\n'
+        f'Ranked by pure Mean  |  Gold = Top 5  |  Tomato = Top 6–10\n'
+        f'Error bars = std across subjects',
+        fontsize=13, fontweight='bold'
+    )
+    ax.set_xlabel('EEG Channel (ranked by mean importance)', fontsize=12)
+    ax.set_ylabel('Mean |DepthwiseConv2D Weight|', fontsize=12)
+    ax.grid(axis='y', linestyle='--', alpha=0.4)
+    for i, (v, s) in enumerate(zip(mean_ordered_mean, std_ordered_mean)):
+        ax.text(i, v + s + 0.001, f"{v:.3f}", ha='center', va='bottom', fontsize=7.5)
+    plt.tight_layout()
+    cross_subj_mean_path = os.path.join(vis_base_dir, "cross_subject_channel_importance_mean.png")
+    plt.savefig(cross_subj_mean_path, dpi=300)
+    plt.close()
+    print(f"\n  Saved mean importance chart: {cross_subj_mean_path}")
+
+    # ---- Plot 2: Consistency Score (Mean - Std) bar chart ----
+    fig_cons, ax_cons = plt.subplots(figsize=(14, 6))
+    ch_ordered_cons = [r[0] for r in ranked_channels_consistency]
+    mean_ordered_cons = [r[1] for r in ranked_channels_consistency]
+    std_ordered_cons  = [r[2] for r in ranked_channels_consistency]
+    score_ordered_cons = [r[1] - r[2] for r in ranked_channels_consistency]  # mean - std
+
+    colors_cons = ['gold' if i < 5 else ('tomato' if i < 10 else 'steelblue')
+                   for i in range(len(ch_ordered_cons))]
+    bars_cons = ax_cons.bar(ch_ordered_cons, score_ordered_cons, color=colors_cons, edgecolor='white',
+                            yerr=std_ordered_cons, capsize=4, error_kw={'ecolor': 'white', 'alpha': 0.6})
+    ax_cons.set_title(
+        f'Cross-Subject Channel Importance — Consistency Score ({len(per_subject_importance)} subjects)\n'
+        f'Score = Mean − Std  |  Gold = Top 5  |  Tomato = Top 6–10\n'
+        f'Error bars = std across subjects  |  Favours channels reliable for ALL subjects',
+        fontsize=13, fontweight='bold'
+    )
+    ax_cons.set_xlabel('EEG Channel (ranked by consistency score)', fontsize=12)
+    ax_cons.set_ylabel('Score = Mean |W| − Std |W|  (higher = more consistent)', fontsize=12)
+    ax_cons.grid(axis='y', linestyle='--', alpha=0.4)
+    for i, (score, std) in enumerate(zip(score_ordered_cons, std_ordered_cons)):
+        ax_cons.text(i, score + std + 0.001, f"{score:.3f}", ha='center', va='bottom', fontsize=7.5)
+    plt.tight_layout()
+    cross_subj_cons_path = os.path.join(vis_base_dir, "cross_subject_channel_importance_consistency.png")
+    plt.savefig(cross_subj_cons_path, dpi=300)
+    plt.close()
+    print(f"  Saved consistency chart:     {cross_subj_cons_path}")
+
+    # ---- Plot 3: Per-subject heatmap (channels × subjects) ----
+    fig2, ax2 = plt.subplots(figsize=(14, max(4, len(per_subject_importance) * 0.6)))
+    subj_labels = list(per_subject_importance.keys())
+    # Reorder channels by consistency score for the heatmap
+    ch_order_idx = [channel_names.index(r[0]) for r in ranked_channels_consistency]
+    heatmap_data = importance_matrix[:, ch_order_idx]  # (n_subj, 19) reordered
+
+    im = ax2.imshow(heatmap_data, aspect='auto', cmap='YlOrRd', interpolation='nearest')
+    ax2.set_xticks(range(19))
+    ax2.set_xticklabels(ch_ordered_cons, rotation=45, ha='right', fontsize=9)
+    ax2.set_yticks(range(len(subj_labels)))
+    ax2.set_yticklabels([f'Subject {s}' for s in subj_labels], fontsize=9)
+    ax2.set_title('Per-Subject Channel Importance Heatmap\n(columns ordered by consistency score)',
+                  fontsize=13, fontweight='bold')
+    plt.colorbar(im, ax=ax2, label='Mean |Weight|')
+    plt.tight_layout()
+    heatmap_path = os.path.join(vis_base_dir, "cross_subject_channel_heatmap.png")
+    plt.savefig(heatmap_path, dpi=300)
+    plt.close()
+    print(f"  Saved per-subject heatmap:   {heatmap_path}")
+
+    # ---- Save rankings as CSV for easy reference ----
+    import csv
+    csv_path = os.path.join(vis_base_dir, "channel_rankings.csv")
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Rank_by_Cons', 'Channel', 'Mean_Importance', 'Std_Importance',
+                         'Score_Mean_minus_Std'] + \
+                        [f'Subject_{s}' for s in per_subject_importance.keys()])
+        for rank, (ch, mean, std) in enumerate(ranked_channels_consistency, 1):
+            ch_idx = channel_names.index(ch)
+            subj_vals = [f"{per_subject_importance[s][ch_idx]:.4f}"
+                         for s in per_subject_importance.keys()]
+            writer.writerow([rank, ch, f"{mean:.4f}", f"{std:.4f}",
+                             f"{mean-std:.4f}"] + subj_vals)
+    print(f"  Saved channel rankings CSV:  {csv_path}")
+
+    print("\n" + "="*60)
+    print(f"  PROTOTYPE RECOMMENDATION (based on consistency score)")
+    print("="*60)
+    for n_keep in [5, 7, 10]:
+        keep = [r[0] for r in ranked_channels_consistency[:n_keep]]
+        print(f"  Top {n_keep} channels: {keep}")
+
+print("\n[INFO] Visualization script completed successfully.")
+print(f"       Per-subject visualizations: {vis_base_dir}/subject_*/")
+print(f"       Cross-subject analysis:     {vis_base_dir}/cross_subject_channel_importance.png")
+print(f"       Channel rankings CSV:       {vis_base_dir}/channel_rankings.csv")

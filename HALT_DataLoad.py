@@ -9,6 +9,10 @@ import mne
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
+# Subjects to exclude from ALL data loading, training, and visualization
+EXCLUDED_SUBJECTS = {'H', 'I'}
+
+
 def standardize_data(X_train, X_test, channels):
     # X_train & X_test :[Trials, MI-tasks, Channels, Time points]
     for j in range(channels):
@@ -94,7 +98,8 @@ def load_halt_subject_data(subject_char: str, data_path: str):
     return np.array(xs_all), np.array(ys_all)
 
 def load_halt(path):
-    subjects_chars = [chr(i) for i in range(ord('A'), ord('N'))] # A to M
+    subjects_chars = [chr(i) for i in range(ord('A'), ord('N'))  # A to M
+                      if chr(i) not in EXCLUDED_SUBJECTS]
     
     xs = list()
     ys = list()
@@ -128,7 +133,8 @@ def load_halt(path):
 
 
 def load_halt_raw(path):
-    subjects_chars = [chr(i) for i in range(ord('A'), ord('N'))] # A to M
+    subjects_chars = [chr(i) for i in range(ord('A'), ord('N'))  # A to M
+                      if chr(i) not in EXCLUDED_SUBJECTS]
 
     xs = list()
     ys = list()
@@ -160,7 +166,7 @@ def get_available_subjects(path):
     subjects = set()
     for f in os.listdir(path):
         m = re.match(r'HaLTSubject([A-Z])', f)
-        if m:
+        if m and m.group(1) not in EXCLUDED_SUBJECTS:
             subjects.add(m.group(1))
     return sorted(subjects)
 
