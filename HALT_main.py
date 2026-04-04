@@ -85,7 +85,7 @@ def getModel(model_name, n_chans=19):
             n_windows=5,
 
             # Attention (AT) block parameter
-            attention='mha',  # Options: None, 'mha','mhla', 'cbam', 'se', 'improved_cbam'
+            attention='improved_cbam',  # Options: None, 'mha','mhla', 'cbam', 'se', 'improved_cbam'
 
             # Temporal convolutional Fusion Network block (TCFN) parameters
             tcn_depth=2,
