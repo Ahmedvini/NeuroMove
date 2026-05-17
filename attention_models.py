@@ -24,15 +24,16 @@ def attention_block(net, attention_model):
         net = mha_block(net, vanilla = False)
     elif attention_model == 'se':   # Squeeze-and-excitation layer
         if(in_len < 4):
-            net = Lambda(lambda x: tf.expand_dims(x, axis=expanded_axis), output_shape=lambda s: s + (1,))(net)
+            # Expand axis 2 so shape becomes (Batch, Sequence, 1, Features) setting Features as Channels
+            net = Lambda(lambda x: tf.expand_dims(x, axis=2), output_shape=lambda s: (s[0], s[1], 1, s[2]))(net)
         net = se_block(net, ratio=8)
     elif attention_model == 'cbam': # Convolutional block attention module
         if(in_len < 4):
-            net = Lambda(lambda x: tf.expand_dims(x, axis=expanded_axis), output_shape=lambda s: s + (1,))(net)
+            net = Lambda(lambda x: tf.expand_dims(x, axis=2), output_shape=lambda s: (s[0], s[1], 1, s[2]))(net)
         net = cbam_block(net, ratio=8)
     elif attention_model == 'improved_cbam': # Improved CBAM from paper
         if(in_len < 4):
-            net = Lambda(lambda x: tf.expand_dims(x, axis=expanded_axis), output_shape=lambda s: s + (1,))(net)
+            net = Lambda(lambda x: tf.expand_dims(x, axis=2), output_shape=lambda s: (s[0], s[1], 1, s[2]))(net)
         net = improved_cbam_block(net, ratio=8)
     else:
         raise Exception("'{}' is not supported attention module!".format(attention_model))

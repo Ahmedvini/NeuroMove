@@ -9,6 +9,7 @@ from keras.constraints import max_norm
 
 from keras import backend as K
 from attention_models import attention_block,eca_attention, improved_cbam_block
+from gumbel_channel_selection import GumbelChannelSelection
 
 def DB_ATCNet(n_classes, in_chans=22, in_samples=1125, n_windows=3, attention=None,
            eegn_F1=16, eegn_D=2, eegn_kernelSize=64, eegn_poolSize=8, eegn_dropout=0.3,
@@ -67,6 +68,111 @@ def DB_ATCNet(n_classes, in_chans=22, in_samples=1125, n_windows=3, attention=No
 
     softmax = Activation('softmax', name='softmax')(sw_concat)
     return Model(inputs=input_1, outputs=softmax)
+
+def DB_ATCNet_GumbelSelect(n_classes, n_channels_total=19, n_channels_select=5,
+                           in_samples=600, gumbel_lambda=0.1,
+                           n_windows=3, attention=None,
+                           eegn_F1=16, eegn_D=2, eegn_kernelSize=64, eegn_poolSize=8,
+                           eegn_dropout=0.3, tcn_depth=2, tcn_kernelSize=4,
+                           tcn_filters=32, tcn_dropout=0.3, tcn_activation='elu',
+                           fuse='average', drop1=0.35, drop2=0.1, drop3=0.15,
+                           drop4=0.15, depth1=2, depth2=4):
+    """DB-ATCNet with a Gumbel-softmax channel selection layer prepended.
+
+    The selection layer takes all N channels as input and jointly learns
+    to select the optimal K channels along with the network weights,
+    following Strypsteen & Bertrand (2021), arXiv:2102.09050.
+
+    Parameters
+    ----------
+    n_classes : int
+        Number of output classes.
+    n_channels_total : int
+        Total number of input channels (N). Default: 19 for HALT dataset.
+    n_channels_select : int
+        Number of channels to select (K).
+    in_samples : int
+        Number of time samples per trial.
+    gumbel_lambda : float
+        Weight for the duplicate-avoidance regularization loss (λ).
+    **kwargs : dict
+        All other DB-ATCNet parameters (attention, dropout, etc.).
+
+    Returns
+    -------
+    model : keras.Model
+        Combined model with the selection layer accessible via
+        model.get_layer('gumbel_selection').
+    """
+    # Input: all N channels
+    input_all = Input(shape=(1, n_channels_total, in_samples),
+                      name='input_all_channels')
+
+    # Gumbel-softmax channel selection: (batch, 1, N, T) -> (batch, 1, K, T)
+    gumbel_layer = GumbelChannelSelection(
+        n_channels=n_channels_total,
+        n_select=n_channels_select,
+        gumbel_lambda=gumbel_lambda,
+        name='gumbel_selection'
+    )
+    selected = gumbel_layer(input_all)
+
+    # Build the downstream DB-ATCNet on the selected K channels
+    # Reuse the same architecture blocks (Permute → ADBC → attention → TCFN)
+    in_chans = n_channels_select
+    input_2 = Permute((3, 2, 1))(selected)
+
+    regRate = .25
+    numFilters = eegn_F1
+    F2 = numFilters * eegn_D
+
+    # ADBC Block
+    block1 = ADBC(input_layer=input_2, F1=eegn_F1, D=eegn_D,
+                  kernLength=eegn_kernelSize, poolSize=eegn_poolSize,
+                  in_chans=in_chans, dropout=eegn_dropout,
+                  drop1=drop1, depth1=depth1, depth2=depth2)
+    # ECA2
+    block1 = eca_attention(block1)
+    block1 = Lambda(lambda x: x[:, :, -1, :])(block1)
+
+    # Sliding window
+    sw_concat = []
+    for i in range(n_windows):
+        st = i
+        end = block1.shape[1] - n_windows + i + 1
+        block2 = block1[:, st:end, :]
+
+        # MHA Block
+        block2 = attention_block(block2, attention)
+        # TCFN Block
+        block3 = TCFN(input_layer=block2, input_dimension=F2, depth=tcn_depth,
+                      kernel_size=tcn_kernelSize, filters=tcn_filters,
+                      dropout=tcn_dropout, activation=tcn_activation,
+                      drop2=drop2, drop3=drop3, drop4=drop4)
+
+        block3 = Lambda(lambda x: x[:, -1, :])(block3)
+
+        if (fuse == 'average'):
+            sw_concat.append(Dense(n_classes, kernel_constraint=max_norm(regRate))(block3))
+        elif (fuse == 'concat'):
+            if i == 0:
+                sw_concat = block3
+            else:
+                sw_concat = Concatenate()([sw_concat, block3])
+
+    if (fuse == 'average'):
+        if len(sw_concat) > 1:
+            sw_concat = tf.keras.layers.Average()(sw_concat[:])
+        else:
+            sw_concat = sw_concat[0]
+    elif (fuse == 'concat'):
+        sw_concat = Dense(n_classes, kernel_constraint=max_norm(regRate))(sw_concat)
+
+    softmax = Activation('softmax', name='softmax')(sw_concat)
+
+    model = Model(inputs=input_all, outputs=softmax)
+
+    return model
 
 def ADBC(input_layer, F1=4, kernLength=64, poolSize=8, D=2, in_chans=22, dropout=0.1,drop1=0.3,depth1=2,depth2=4):
     F2 = F1 * D
