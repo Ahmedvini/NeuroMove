@@ -16,6 +16,7 @@ from sklearn.model_selection import StratifiedKFold, LeaveOneGroupOut
 
 import models
 import HALT_DataLoad
+from gumbel_channel_selection import GumbelAnnealingCallback
 load_halt_raw = HALT_DataLoad.load_halt_raw
 standardize_data = HALT_DataLoad.standardize_data
 load_halt_subject_by_session = HALT_DataLoad.load_halt_subject_by_session
@@ -27,8 +28,26 @@ CHANNEL_NAMES = ['Fp1','Fp2','F3','F4','C3','C4','P3','P4','O1','O2',
                   'F7','F8','T3','T4','T5','T6','Fz','Cz','Pz']
 
 # Cross-subject ranked order (based on the mean-std consistency metric)
-RANKED_CHANNELS = ['T5','T3','Fp2','Fz','Pz','F7','C4','T6','O2','F8',
-                   'Cz','F4','F3','T4','P3','C3','Fp1','O1','P4']
+RANKED_CHANNELS = ['Cz',   # Drop: 0.0156
+    'P3',   # Drop: 0.0128
+    'T5',   # Drop: 0.0108
+    'F7',   # Drop: 0.0106
+    'T3',   # Drop: 0.0103
+    'O2',   # Drop: 0.0096
+    'F8',   # Drop: 0.0090
+    'P4',   # Drop: 0.0085
+    'Fz',   # Drop: 0.0069
+    'C4',   # Drop: 0.0059
+    'T6',   # Drop: 0.0036
+    'Pz',   # Drop: 0.0017
+    'F3',   # Drop: 0.0017
+    'F4',   # Drop: 0.0011
+    'T4',   # Drop: -0.0001
+    'C3',   # Drop: -0.0005
+    'Fp1',  # Drop: -0.0005
+    'Fp2',   # Drop: -0.0014
+    'O1',   # Drop: 0.0119
+    ]
 RANKED_INDICES = [CHANNEL_NAMES.index(ch) for ch in RANKED_CHANNELS]
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -61,7 +80,7 @@ def plot_learning_curves(history, title, out_path):
     plt.close()
 
 
-def getModel(model_name, n_chans=19):
+def getModel(model_name, n_chans=19, **kwargs):
     # Select the model
     if (model_name == 'DB_ATCNet'):
         # Train using the proposed model (ATCNet): https://doi.org/10.1109/TII.2022.3197419
@@ -140,6 +159,26 @@ def getModel(model_name, n_chans=19):
     elif (model_name == 'ShallowConvNet'):
         # Train using ShallowConvNet: https://doi.org/10.1002/hbm.23730
         model = models.ShallowConvNet(nb_classes=2, Chans=n_chans, Samples=600)
+    elif (model_name == 'DB_ATCNet_GumbelSelect'):
+        # DB-ATCNet with Gumbel-softmax channel selection (Strypsteen & Bertrand 2021)
+        # n_chans here is the number of channels to SELECT (K)
+        # n_channels_total comes from gumbel_kwargs
+        gumbel_kwargs = kwargs.get('gumbel_kwargs', {})
+        model = models.DB_ATCNet_GumbelSelect(
+            n_classes=2,
+            n_channels_total=gumbel_kwargs.get('n_channels_total', 19),
+            n_channels_select=n_chans,
+            in_samples=600,
+            gumbel_lambda=gumbel_kwargs.get('gumbel_lambda', 0.2),
+            # Same DB-ATCNet hyperparameters as the baseline
+            eegn_F1=16, eegn_D=2, eegn_kernelSize=64, eegn_poolSize=7,
+            eegn_dropout=0.3, drop1=0.35, depth1=2, depth2=4,
+            n_windows=5,
+            attention='improved_cbam',
+            tcn_depth=2, tcn_kernelSize=4, tcn_filters=32,
+            tcn_dropout=0.3, drop2=0.1, drop3=0.15, drop4=0.15,
+            tcn_activation='elu',
+        )
     else:
         raise Exception("'{}' model is not supported yet!".format(model_name))
 
@@ -402,6 +441,7 @@ def train_subject_dependent(dataset_conf, train_conf, results_path,
                 )
 
             # Free GPU and System memory
+            del model, history, X_train, X_test, X_train_s, X_test_s, y_train_oh, y_test_oh, y_pred, labels
             keras.backend.clear_session()
             import gc
             gc.collect()
@@ -461,6 +501,11 @@ def train_subject_dependent(dataset_conf, train_conf, results_path,
                          f'Kappa={avg_kappa:.5f}±{std_kappa:.5f}  '
                          f'Time={subj_time:.2f}min\n')
         global_log.flush()
+        
+        # Explicit free of subject large arrays
+        del X_all, y_all_onehot, y_labels, session_ids
+        keras.backend.clear_session()
+        gc.collect()
 
 
 
@@ -660,7 +705,10 @@ def train_kfold(dataset_conf, train_conf, results_path):
             )
         
         # Clear session to free memory
+        del model, history, X_train, X_test, X_train_scaled, X_test_scaled, y_train_onehot, y_test_onehot, y_pred, labels
         keras.backend.clear_session()
+        import gc
+        gc.collect()
     
     # Calculate and report final results
     out_exp = time.time()
@@ -727,6 +775,363 @@ def train_kfold(dataset_conf, train_conf, results_path):
     plt.close()
     
     print(f"\nResults saved to: {results_path}")
+
+
+def train_gumbel_selection(dataset_conf, train_conf, results_path,
+                           n_select_channels, n_channels_total=19):
+    """Train DB-ATCNet with Gumbel-softmax channel selection.
+
+    Follows Strypsteen & Bertrand (2021): the selection layer and network
+    weights are trained jointly in a single end-to-end phase.  Uses the
+    existing subject-dependent LOSO CV pipeline.
+
+    Parameters
+    ----------
+    dataset_conf : dict
+        Dataset configuration.
+    train_conf : dict
+        Training configuration (will be modified to use Gumbel model).
+    results_path : str
+        Output directory for results.
+    n_select_channels : int
+        Number of channels K to select.
+    n_channels_total : int
+        Total number of input channels N (default: 19).
+    """
+    print(f"\n{'#' * 70}")
+    print(f"  GUMBEL CHANNEL SELECTION: selecting {n_select_channels} from {n_channels_total} channels")
+    print(f"{'#' * 70}")
+    in_exp = time.time()
+
+    # Get parameters
+    data_path = dataset_conf.get('data_path')
+    n_classes = dataset_conf.get('n_classes')
+    batch_size = train_conf.get('batch_size')
+    epochs = train_conf.get('epochs')
+    patience = train_conf.get('patience')
+    lr = train_conf.get('lr')
+    LearnCurves = train_conf.get('LearnCurves')
+
+    # Discover available subjects
+    subjects = get_available_subjects(data_path)
+    print(f"Found {len(subjects)} subjects: {subjects}")
+
+    # Global log
+    global_log = open(results_path + "/global_summary.txt", "w")
+    global_log.write(f"Gumbel Channel Selection — DB_ATCNet_GumbelSelect\n")
+    global_log.write(f"Selecting {n_select_channels} from {n_channels_total} channels\n")
+    global_log.write(f"Leave-one-session-out cross-validation per subject\n")
+    global_log.write('=' * 80 + '\n\n')
+
+    all_subject_accs = {}
+    all_subject_kappas = {}
+    all_subject_selections = {}
+
+    for subj_idx, subj in enumerate(subjects, 1):
+        print(f"\n{'#' * 70}")
+        print(f"  SUBJECT {subj} ({subj_idx}/{len(subjects)})")
+        print(f"{'#' * 70}")
+        in_subj = time.time()
+
+        subj_path = os.path.join(results_path, f'subject_{subj}')
+        os.makedirs(subj_path, exist_ok=True)
+
+        # Load this subject's data WITH session IDs
+        X_all, y_all_onehot, y_labels, session_ids, n_channels = \
+            load_halt_subject_by_session(subj, data_path)
+        if len(X_all) == 0:
+            print(f'Subject {subj}: no data found, skipping.')
+            continue
+
+        # NOTE: no channel slicing — the Gumbel layer handles selection
+        print(f"  Input channels: {n_channels} → selecting {n_select_channels}")
+
+        n_sessions = len(np.unique(session_ids))
+        subj_log = open(os.path.join(subj_path, 'subject_summary.txt'), 'w')
+
+        fold_accs = []
+        fold_kappas = []
+        fold_selections = []
+
+        # Single-session subject: use stratified 80/20 train-test split
+        if n_sessions == 1:
+            from sklearn.model_selection import train_test_split
+            subj_log.write(f'Subject {subj} — Gumbel K={n_select_channels} — Single session (80/20 split)\n')
+            subj_log.write('=' * 60 + '\n')
+            print(f"  Subject {subj} has only 1 session — using 80/20 stratified split")
+
+            train_idx, test_idx = train_test_split(
+                np.arange(len(y_labels)), test_size=0.2,
+                stratify=y_labels, random_state=42
+            )
+            splits = [(train_idx, test_idx)]
+            fold_names = ['train_test_split']
+        else:
+            subj_log.write(f'Subject {subj} — Gumbel K={n_select_channels} — LOSO CV ({n_sessions} sessions)\n')
+            subj_log.write('=' * 60 + '\n')
+            logo = LeaveOneGroupOut()
+            splits = list(logo.split(X_all, y_labels, session_ids))
+            fold_names = [f'session_{np.unique(session_ids[ti])[0] + 1}_heldout'
+                          for _, ti in splits]
+
+        for fold, (train_idx, test_idx) in enumerate(splits, 1):
+            fold_label = fold_names[fold - 1]
+            print(f"\n{'=' * 50}")
+            print(f"  Subject {subj} — {fold_label} (fold {fold}/{len(splits)})")
+            print(f"{'=' * 50}")
+            in_fold = time.time()
+
+            # Split
+            X_train, X_test = X_all[train_idx], X_all[test_idx]
+            y_train_oh, y_test_oh = y_all_onehot[train_idx], y_all_onehot[test_idx]
+
+            # Standardize (fit on train, transform both)
+            X_train_s, X_test_s = standardize_data(
+                X_train.copy(), X_test.copy(), n_channels
+            )
+
+            print(f"  Train: {X_train_s.shape[0]}  Test: {X_test_s.shape[0]}")
+            print(f"  Train dist: {np.bincount(y_labels[train_idx])}")
+            print(f"  Test  dist: {np.bincount(y_labels[test_idx])}")
+
+            # Fold output folder
+            fold_path = os.path.join(subj_path, fold_label)
+            os.makedirs(fold_path, exist_ok=True)
+            weights_path = os.path.join(fold_path, 'best_model.weights.h5')
+
+            # Build model with Gumbel selection layer
+            model = getModel('DB_ATCNet_GumbelSelect', n_chans=n_select_channels,
+                             gumbel_kwargs={
+                                 'n_channels_total': n_channels_total,
+                                 'gumbel_lambda': 1.0,
+                             })
+            model.compile(
+                loss=categorical_crossentropy,
+                optimizer=Adam(learning_rate=lr),
+                metrics=['accuracy']
+            )
+
+            # Get the Gumbel selection layer for the callback
+            gumbel_layer = model.get_layer('gumbel_selection')
+
+            # Callbacks: standard + Gumbel annealing
+            gumbel_callback = GumbelAnnealingCallback(
+                gumbel_layer=gumbel_layer,
+                total_epochs=epochs,
+                start_temp=10.0, end_temp=0.1,
+                start_thresh=3.0, end_thresh=1.0,
+                temp_anneal_fraction=0.25,
+                thresh_anneal_fraction=0.25,
+                channel_names=CHANNEL_NAMES,
+                verbose=True
+            )
+
+            callbacks = [
+                ModelCheckpoint(weights_path, monitor='val_accuracy', verbose=1,
+                                save_best_only=True, save_weights_only=True, mode='max'),
+                EarlyStopping(monitor='val_accuracy', verbose=1, mode='max', patience=patience),
+                gumbel_callback,
+            ]
+
+            # Train
+            history = model.fit(
+                X_train_s, y_train_oh,
+                validation_data=(X_test_s, y_test_oh),
+                epochs=epochs, batch_size=batch_size,
+                callbacks=callbacks, verbose=1
+            )
+
+            # Load best weights & evaluate (inference mode = hard selection)
+            model.load_weights(weights_path)
+            y_pred = model.predict(X_test_s).argmax(axis=-1)
+            labels = y_test_oh.argmax(axis=-1)
+
+            acc = accuracy_score(labels, y_pred)
+            kappa = cohen_kappa_score(labels, y_pred)
+            fold_accs.append(acc)
+            fold_kappas.append(kappa)
+
+            # Extract selected channels
+            selected_indices = gumbel_layer.get_selected_channels()
+            selected_names = [CHANNEL_NAMES[i] for i in selected_indices]
+            n_unique = len(set(selected_indices.tolist()))
+            fold_selections.append(selected_indices.tolist())
+
+            out_fold = time.time()
+            info = (f'  Subject {subj} Fold {fold}: '
+                    f'Acc={acc:.5f}  Kappa={kappa:.5f}  '
+                    f'Time={((out_fold - in_fold) / 60):.2f}min\n'
+                    f'    Selected channels ({n_unique} unique): {selected_names}')
+            print(info)
+            subj_log.write(info + '\n')
+
+            # Save selected channels info
+            sel_info = {
+                'selected_indices': selected_indices.tolist(),
+                'selected_names': selected_names,
+                'n_unique': n_unique,
+                'selection_probabilities': gumbel_layer.get_selection_probabilities().tolist(),
+                'final_entropy': gumbel_layer.get_normalized_entropy().tolist(),
+                'entropy_history': gumbel_callback.entropy_history,
+            }
+            import json
+            with open(os.path.join(fold_path, 'selected_channels.json'), 'w') as f:
+                json.dump(sel_info, f, indent=2)
+
+            # Confusion matrix
+            cf = confusion_matrix(labels, y_pred, normalize='pred')
+            plot_confusion(
+                cf,
+                ['Right Hand', 'Left Leg'],
+                f'Subject {subj} — {fold_label} (Gumbel K={n_select_channels})',
+                os.path.join(fold_path, 'confusion_matrix.png'),
+            )
+
+            # Learning curves
+            if LearnCurves:
+                plot_learning_curves(
+                    history,
+                    f'Subject {subj} {fold_label} (Gumbel K={n_select_channels})',
+                    os.path.join(fold_path, 'learning_curves.png'),
+                )
+
+            # Free GPU and system memory
+            del model, history, X_train, X_test, X_train_s, X_test_s, y_train_oh, y_test_oh, y_pred, labels
+            keras.backend.clear_session()
+            import gc
+            gc.collect()
+
+        # ---- Subject summary ----
+        out_subj = time.time()
+        subj_time = (out_subj - in_subj) / 60
+        avg_acc = np.mean(fold_accs)
+        std_acc = np.std(fold_accs)
+        avg_kappa = np.mean(fold_kappas)
+        std_kappa = np.std(fold_kappas)
+
+        all_subject_accs[subj] = fold_accs
+        all_subject_kappas[subj] = fold_kappas
+        all_subject_selections[subj] = fold_selections
+
+        subj_summary = (
+            f'\n{"=" * 60}\n'
+            f'Subject {subj} Summary (Gumbel K={n_select_channels}, LOSO, {n_sessions} sessions)\n'
+            f'  Per-session Acc:   {[f"{a:.4f}" for a in fold_accs]}\n'
+            f'  Per-session Kappa: {[f"{k:.4f}" for k in fold_kappas]}\n'
+            f'  Avg Acc:   {avg_acc:.5f} ± {std_acc:.5f}\n'
+            f'  Avg Kappa: {avg_kappa:.5f} ± {std_kappa:.5f}\n'
+            f'  Selected channels per fold: {fold_selections}\n'
+            f'  Time: {subj_time:.2f} min\n'
+            f'{"=" * 60}\n'
+        )
+        print(subj_summary)
+        subj_log.write(subj_summary)
+        subj_log.close()
+
+        # Save per-subject fold metrics
+        np.savez(
+            os.path.join(subj_path, 'loso_results.npz'),
+            accuracies=np.array(fold_accs),
+            kappas=np.array(fold_kappas),
+            avg_acc=avg_acc, std_acc=std_acc,
+            avg_kappa=avg_kappa, std_kappa=std_kappa
+        )
+
+        # Write to global log
+        global_log.write(f'Subject {subj}: Acc={avg_acc:.5f}±{std_acc:.5f}  '
+                         f'Kappa={avg_kappa:.5f}±{std_kappa:.5f}  '
+                         f'Selections={fold_selections}  '
+                         f'Time={subj_time:.2f}min\n')
+        global_log.flush()
+
+        # Explicit free of subject large arrays
+        del X_all, y_all_onehot, y_labels, session_ids
+        keras.backend.clear_session()
+        gc.collect()
+
+    # ---- Global summary ----
+    out_exp = time.time()
+    total_time = (out_exp - in_exp) / 60
+
+    subj_avg_accs = [np.mean(v) for v in all_subject_accs.values()]
+    subj_avg_kappas = [np.mean(v) for v in all_subject_kappas.values()]
+
+    global_summary = (
+        f'\n{"=" * 80}\n'
+        f'GLOBAL GUMBEL SELECTION RESULTS (K={n_select_channels})\n'
+        f'{"=" * 80}\n'
+        f'Selecting {n_select_channels} from {n_channels_total} channels\n'
+        f'Subjects: {len(all_subject_accs)}\n'
+        f'CV method: Leave-One-Session-Out\n\n'
+    )
+    for s in all_subject_accs:
+        sel_str = str(all_subject_selections.get(s, []))
+        global_summary += (f'  Subject {s}: Acc={np.mean(all_subject_accs[s]):.5f}±'
+                           f'{np.std(all_subject_accs[s]):.5f}  '
+                           f'Kappa={np.mean(all_subject_kappas[s]):.5f}±'
+                           f'{np.std(all_subject_kappas[s]):.5f}  '
+                           f'Sel={sel_str}\n')
+    global_summary += (
+        f'\n  Overall Avg Acc:   {np.mean(subj_avg_accs):.5f} ± {np.std(subj_avg_accs):.5f}\n'
+        f'  Overall Avg Kappa: {np.mean(subj_avg_kappas):.5f} ± {np.std(subj_avg_kappas):.5f}\n'
+        f'  Total Time: {total_time:.2f} min ({total_time/60:.2f} h)\n'
+        f'{"=" * 80}\n'
+    )
+    print(global_summary)
+    global_log.write('\n' + global_summary)
+    global_log.close()
+
+    # Save all metrics
+    np.savez(
+        os.path.join(results_path, 'all_subjects_results.npz'),
+        subjects=np.array(list(all_subject_accs.keys())),
+        subject_avg_accs=np.array(subj_avg_accs),
+        subject_avg_kappas=np.array(subj_avg_kappas),
+        overall_avg_acc=np.mean(subj_avg_accs),
+        overall_std_acc=np.std(subj_avg_accs),
+        overall_avg_kappa=np.mean(subj_avg_kappas),
+        overall_std_kappa=np.std(subj_avg_kappas)
+    )
+
+    print(f"\nResults saved to: {results_path}")
+
+
+def run_gumbel(k_channels_list=(3, 5, 7, 10)):
+    """Run Gumbel-softmax channel selection for multiple K values."""
+    data_path = get_data_path()
+    gumbel_root = os.path.join(os.getcwd(), 'results', 'gumbel_selection')
+    os.makedirs(gumbel_root, exist_ok=True)
+
+    train_conf = {
+        'batch_size': 32,
+        'epochs': 500,
+        'patience': 50,
+        'lr': 0.0009,
+        'LearnCurves': True,
+        'model': 'DB_ATCNet_GumbelSelect',
+    }
+    dataset_conf = {'n_classes': 2, 'n_channels': 19, 'data_path': data_path}
+
+    for k in k_channels_list:
+        print(f"\n{'#' * 70}")
+        print(f"  GUMBEL SELECTION: K={k}")
+        print(f"{'#' * 70}")
+
+        k_path = os.path.join(gumbel_root, f'k_{k}')
+        os.makedirs(k_path, exist_ok=True)
+
+        train_gumbel_selection(
+            dataset_conf, train_conf, k_path,
+            n_select_channels=k,
+            n_channels_total=19
+        )
+
+        # Free memory between K values
+        import gc
+        keras.backend.clear_session()
+        gc.collect()
+
+    print(f"\nAll Gumbel selection results saved to: {gumbel_root}")
 
 
 def run_ablation(channel_counts=(3, 5, 7, 10)):
@@ -862,9 +1267,15 @@ if __name__ == "__main__":
                         help="Run multi-channel ablation study")
     parser.add_argument("--ablation-channels", type=int, nargs="+", default=[3, 5, 7, 10],
                         help="List of channel counts for ablation (e.g. --ablation-channels 3 5 7 10)")
+    parser.add_argument("--gumbel-select", action="store_true",
+                        help="Run Gumbel-softmax channel selection (Strypsteen & Bertrand 2021)")
+    parser.add_argument("--gumbel-k", type=int, nargs="+", default=[3, 5, 7, 10],
+                        help="Number of channels to select (e.g. --gumbel-k 3 5 7 10)")
     args = parser.parse_args()
 
-    if args.ablation:
+    if args.gumbel_select:
+        run_gumbel(k_channels_list=args.gumbel_k)
+    elif args.ablation:
         run_ablation(channel_counts=args.ablation_channels)
     elif args.single_run:
         run()
@@ -873,5 +1284,7 @@ if __name__ == "__main__":
         print("  python HALT_main.py --single-run")
         print("  python HALT_main.py --ablation")
         print("  python HALT_main.py --ablation --ablation-channels 2 4 8 16")
+        print("  python HALT_main.py --gumbel-select")
+        print("  python HALT_main.py --gumbel-select --gumbel-k 3 5 7 10")
         print("")
         parser.print_help()
