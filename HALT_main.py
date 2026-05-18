@@ -170,7 +170,6 @@ def getModel(model_name, n_chans=19, **kwargs):
             n_channels_select=n_chans,
             in_samples=600,
             gumbel_lambda=gumbel_kwargs.get('gumbel_lambda', 0.2),
-            ranked_init=gumbel_kwargs.get('ranked_init', None),
             # Same DB-ATCNet hyperparameters as the baseline
             eegn_F1=16, eegn_D=2, eegn_kernelSize=64, eegn_poolSize=7,
             eegn_dropout=0.3, drop1=0.35, depth1=2, depth2=4,

@@ -54,14 +54,11 @@ class GumbelChannelSelection(Layer):
     """
 
     def __init__(self, n_channels, n_select, initial_temperature=10.0,
-                 gumbel_lambda=0.2, ranked_init=None, **kwargs):
+                 gumbel_lambda=0.2, **kwargs):
         super().__init__(**kwargs)
         self.n_channels = n_channels  # N
         self.n_select = n_select      # K
         self.gumbel_lambda = gumbel_lambda
-        # ranked_init: list of K channel indices in order of preference.
-        # If provided, logits are warm-started so neuron k prefers channel ranked_init[k].
-        self.ranked_init = list(ranked_init[:n_select]) if ranked_init is not None else None
         self.temperature = tf.Variable(
             initial_temperature, trainable=False, dtype=tf.float32,
             name='temperature'
@@ -80,23 +77,6 @@ class GumbelChannelSelection(Layer):
             trainable=True,
         )
         super().build(input_shape)
-        # Warm-start logits from ranked list if provided
-        if self.ranked_init is not None:
-            self._init_ranked_logits()
-
-    def _init_ranked_logits(self):
-        """Initialize logits so neuron k starts preferring ranked_init[k].
-
-        A small positive bias (init_strength) is added to position
-        (ranked_init[k], k), while all other entries stay near zero.
-        This is a soft prior — gradients can still move the logits freely.
-        """
-        import numpy as np
-        init_strength = 1.0
-        values = np.zeros((self.n_channels, self.n_select), dtype=np.float32)
-        for k, ch_idx in enumerate(self.ranked_init):
-            values[ch_idx, k] = init_strength
-        self.logits.assign(values)
 
     def call(self, inputs, training=None):
         """Forward pass.
@@ -222,7 +202,6 @@ class GumbelChannelSelection(Layer):
             'n_select': self.n_select,
             'initial_temperature': float(self.temperature.numpy()),
             'gumbel_lambda': self.gumbel_lambda,
-            'ranked_init': self.ranked_init,
         })
         return config
 
