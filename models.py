@@ -71,6 +71,7 @@ def DB_ATCNet(n_classes, in_chans=22, in_samples=1125, n_windows=3, attention=No
 
 def DB_ATCNet_GumbelSelect(n_classes, n_channels_total=19, n_channels_select=5,
                            in_samples=600, gumbel_lambda=0.1,
+                           ranked_init=None,
                            n_windows=3, attention=None,
                            eegn_F1=16, eegn_D=2, eegn_kernelSize=64, eegn_poolSize=8,
                            eegn_dropout=0.3, tcn_depth=2, tcn_kernelSize=4,
@@ -113,6 +114,7 @@ def DB_ATCNet_GumbelSelect(n_classes, n_channels_total=19, n_channels_select=5,
         n_channels=n_channels_total,
         n_select=n_channels_select,
         gumbel_lambda=gumbel_lambda,
+        ranked_init=ranked_init,
         name='gumbel_selection'
     )
     selected = gumbel_layer(input_all)

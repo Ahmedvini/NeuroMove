@@ -170,6 +170,7 @@ def getModel(model_name, n_chans=19, **kwargs):
             n_channels_select=n_chans,
             in_samples=600,
             gumbel_lambda=gumbel_kwargs.get('gumbel_lambda', 0.2),
+            ranked_init=gumbel_kwargs.get('ranked_init', None),
             # Same DB-ATCNet hyperparameters as the baseline
             eegn_F1=16, eegn_D=2, eegn_kernelSize=64, eegn_poolSize=7,
             eegn_dropout=0.3, drop1=0.35, depth1=2, depth2=4,
@@ -778,7 +779,8 @@ def train_kfold(dataset_conf, train_conf, results_path):
 
 
 def train_gumbel_selection(dataset_conf, train_conf, results_path,
-                           n_select_channels, n_channels_total=19):
+                           n_select_channels, n_channels_total=19,
+                           subjects_filter=None):
     """Train DB-ATCNet with Gumbel-softmax channel selection.
 
     Follows Strypsteen & Bertrand (2021): the selection layer and network
@@ -814,6 +816,8 @@ def train_gumbel_selection(dataset_conf, train_conf, results_path,
 
     # Discover available subjects
     subjects = get_available_subjects(data_path)
+    if subjects_filter:
+        subjects = [s for s in subjects if s in subjects_filter]
     print(f"Found {len(subjects)} subjects: {subjects}")
 
     # Global log
@@ -929,7 +933,6 @@ def train_gumbel_selection(dataset_conf, train_conf, results_path,
             callbacks = [
                 ModelCheckpoint(weights_path, monitor='val_accuracy', verbose=1,
                                 save_best_only=True, save_weights_only=True, mode='max'),
-                EarlyStopping(monitor='val_accuracy', verbose=1, mode='max', patience=patience),
                 gumbel_callback,
             ]
 
@@ -1096,7 +1099,7 @@ def train_gumbel_selection(dataset_conf, train_conf, results_path,
     print(f"\nResults saved to: {results_path}")
 
 
-def run_gumbel(k_channels_list=(3, 5, 7, 10)):
+def run_gumbel(k_channels_list=(3, 5, 7, 10), subjects_filter=None):
     """Run Gumbel-softmax channel selection for multiple K values."""
     data_path = get_data_path()
     gumbel_root = os.path.join(os.getcwd(), 'results', 'gumbel_selection')
@@ -1123,7 +1126,8 @@ def run_gumbel(k_channels_list=(3, 5, 7, 10)):
         train_gumbel_selection(
             dataset_conf, train_conf, k_path,
             n_select_channels=k,
-            n_channels_total=19
+            n_channels_total=19,
+            subjects_filter=subjects_filter
         )
 
         # Free memory between K values
@@ -1271,10 +1275,12 @@ if __name__ == "__main__":
                         help="Run Gumbel-softmax channel selection (Strypsteen & Bertrand 2021)")
     parser.add_argument("--gumbel-k", type=int, nargs="+", default=[3, 5, 7, 10],
                         help="Number of channels to select (e.g. --gumbel-k 3 5 7 10)")
+    parser.add_argument("--subjects", type=str, nargs="+", default=None,
+                        help="Limit training to specific subjects (e.g. --subjects M A B)")
     args = parser.parse_args()
 
     if args.gumbel_select:
-        run_gumbel(k_channels_list=args.gumbel_k)
+        run_gumbel(k_channels_list=args.gumbel_k, subjects_filter=args.subjects)
     elif args.ablation:
         run_ablation(channel_counts=args.ablation_channels)
     elif args.single_run:
