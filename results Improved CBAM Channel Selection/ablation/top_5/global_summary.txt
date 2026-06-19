@@ -1,0 +1,38 @@
+Subject-Dependent Training — DB_ATCNet
+Leave-one-session-out cross-validation per subject
+================================================================================
+
+Subject A: Acc=0.88382±0.03200  Kappa=0.76773±0.06386  Time=4.38min
+Subject B: Acc=0.81175±0.04068  Kappa=0.62457±0.08269  Time=5.58min
+Subject C: Acc=0.82040±0.10612  Kappa=0.64075±0.21244  Time=2.45min
+Subject E: Acc=0.85183±0.06812  Kappa=0.70316±0.13682  Time=4.32min
+Subject F: Acc=0.87392±0.02662  Kappa=0.74780±0.05325  Time=4.30min
+Subject G: Acc=0.86064±0.10192  Kappa=0.71989±0.20583  Time=4.28min
+Subject J: Acc=1.00000±0.00000  Kappa=1.00000±0.00000  Time=1.08min
+Subject K: Acc=0.84742±0.02837  Kappa=0.69444±0.05693  Time=2.45min
+Subject L: Acc=0.91543±0.00838  Kappa=0.83089±0.01660  Time=2.99min
+Subject M: Acc=0.81222±0.06199  Kappa=0.62451±0.12372  Time=4.63min
+
+
+================================================================================
+GLOBAL SUBJECT-DEPENDENT RESULTS (Leave-One-Session-Out)
+================================================================================
+Model: DB_ATCNet
+Subjects: 10
+CV method: Leave-One-Session-Out
+
+  Subject A: Acc=0.88382±0.03200  Kappa=0.76773±0.06386
+  Subject B: Acc=0.81175±0.04068  Kappa=0.62457±0.08269
+  Subject C: Acc=0.82040±0.10612  Kappa=0.64075±0.21244
+  Subject E: Acc=0.85183±0.06812  Kappa=0.70316±0.13682
+  Subject F: Acc=0.87392±0.02662  Kappa=0.74780±0.05325
+  Subject G: Acc=0.86064±0.10192  Kappa=0.71989±0.20583
+  Subject J: Acc=1.00000±0.00000  Kappa=1.00000±0.00000
+  Subject K: Acc=0.84742±0.02837  Kappa=0.69444±0.05693
+  Subject L: Acc=0.91543±0.00838  Kappa=0.83089±0.01660
+  Subject M: Acc=0.81222±0.06199  Kappa=0.62451±0.12372
+
+  Overall Avg Acc:   0.86774 ± 0.05407
+  Overall Avg Kappa: 0.73537 ± 0.10809
+  Total Time: 37.06 min (0.62 h)
+================================================================================

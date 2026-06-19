@@ -1,0 +1,16 @@
+Subject L — Gumbel K=5 — LOSO CV (2 sessions)
+============================================================
+  Subject L Fold 1: Acc=0.94551  Kappa=0.89100  Time=2.99min
+    Selected channels (4 unique): ['F8', 'F8', 'F7', 'Fp2', 'Fz']
+  Subject L Fold 2: Acc=0.94286  Kappa=0.88568  Time=3.00min
+    Selected channels (4 unique): ['T5', 'F8', 'F8', 'Cz', 'F4']
+
+============================================================
+Subject L Summary (Gumbel K=5, LOSO, 2 sessions)
+  Per-session Acc:   ['0.9455', '0.9429']
+  Per-session Kappa: ['0.8910', '0.8857']
+  Avg Acc:   0.94418 ± 0.00133
+  Avg Kappa: 0.88834 ± 0.00266
+  Selected channels per fold: [[11, 11, 10, 1, 16], [14, 11, 11, 17, 3]]
+  Time: 6.21 min
+============================================================

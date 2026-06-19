@@ -8,3 +8,5 @@ BCI_2A_Results
 HALT
 
 results*
+!results MHA HALT/
+!results Improved CBAM Channel Selection/

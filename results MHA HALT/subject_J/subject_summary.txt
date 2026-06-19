@@ -1,0 +1,12 @@
+Subject J — DB_ATCNet — Single session (80/20 split)
+============================================================
+  Subject J Fold 1: Acc=1.00000  Kappa=1.00000  Time=1.17min
+
+============================================================
+Subject J Summary (LOSO, 1 sessions)
+  Per-session Acc:   ['1.0000']
+  Per-session Kappa: ['1.0000']
+  Avg Acc:   1.00000 ± 0.00000
+  Avg Kappa: 1.00000 ± 0.00000
+  Time: 1.26 min
+============================================================

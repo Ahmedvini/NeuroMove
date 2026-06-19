@@ -1,0 +1,14 @@
+Subject A — DB_ATCNet — LOSO CV (3 sessions)
+============================================================
+  Subject A Fold 1: Acc=0.97452  Kappa=0.94904  Time=1.75min
+  Subject A Fold 2: Acc=0.95335  Kappa=0.90620  Time=1.81min
+  Subject A Fold 3: Acc=0.97143  Kappa=0.94283  Time=1.91min
+
+============================================================
+Subject A Summary (LOSO, 3 sessions)
+  Per-session Acc:   ['0.9745', '0.9534', '0.9714']
+  Per-session Kappa: ['0.9490', '0.9062', '0.9428']
+  Avg Acc:   0.96643 ± 0.00934
+  Avg Kappa: 0.93269 ± 0.01890
+  Time: 5.55 min
+============================================================
