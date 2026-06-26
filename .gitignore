@@ -1,0 +1,101 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+.ipynb_checkpoints/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- ML / DL artifacts ----------
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+*.onnx
+*.pb
+*.tflite
+*.pkl
+*.joblib
+*.npy
+*.npz
+checkpoints/
+saved-models/
+wandb/
+mlruns/
+runs/
+lightning_logs/
+
+# ---------- Data ----------
+data/raw/*
+data/interim/*
+data/processed/*
+data/external/*
+!data/**/.gitkeep
+*.csv
+*.edf
+*.bdf
+*.fif
+*.set
+*.mat
+*.snirf
+
+# ---------- Results / logs ----------
+results/figures/*
+results/reports/*
+results/logs/*
+!results/**/.gitkeep
+*.log
+
+# ---------- FPGA (Vivado/Quartus/etc.) ----------
+*.jou
+*.str
+*.bit
+*.bin
+*.rpt
+*.dcp
+*.ltx
+.Xil/
+*.cache/
+*.runs/
+*.hw/
+*.sim/
+*.gen/
+*.ip_user_files/
+vivado*.backup*
+work/
+transcript
+*.wlf
+*.vcd
+*.ghw
+
+# ---------- ESP / Embedded ----------
+.pio/
+.pioenvs/
+.piolibdeps/
+build/
+*.elf
+sdkconfig.old
+
+# ---------- COMSOL ----------
+*.mph.lock
+*.recovery
+
+# ---------- CoppeliaSim ----------
+*.ttt.lock
+
+# ---------- OS / Editor ----------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

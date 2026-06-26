@@ -1,0 +1,34 @@
+# Core scientific stack
+numpy
+scipy
+pandas
+matplotlib
+seaborn
+scikit-learn
+
+# Neurophysiology / signal processing
+mne                 # EEG/MEG/fNIRS processing
+mne-nirs            # fNIRS-specific tools
+pywavelets
+
+# Deep learning (pick/pin the one you use)
+torch
+torchvision
+# tensorflow
+
+# Classical ML
+xgboost
+
+# Experiment tracking & utilities
+tqdm
+pyyaml
+hydra-core
+tensorboard
+# wandb
+
+# Notebooks
+jupyterlab
+ipykernel
+
+# Simulation remote APIs
+# coppeliasim-zmqremoteapi-client   # CoppeliaSim Python remote API

@@ -1,0 +1,27 @@
+name: eeg-fnirs-bci
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - jupyterlab
+  - ipykernel
+  - tqdm
+  - pyyaml
+  - tensorboard
+  - pip:
+      - mne
+      - mne-nirs
+      - pywavelets
+      - xgboost
+      - hydra-core
+      - torch
+      # - tensorflow
+      # - coppeliasim-zmqremoteapi-client
