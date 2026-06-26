@@ -1,0 +1,66 @@
+-------------------------------------
+| Tool Version : Vivado v.2025.2
+| Date         : Sun May 31 01:12:35 2026
+| Host         : pop-os
+| Design       : design_1
+| Device       : xczu7ev-ffvc1156-2-E-
+-------------------------------------
+
+For more information on clockInfo.txt clock routing debug file see https://support.xilinx.com/s/article/000035660?language=en_US
+
+***********************
+Running Pre-CRP Checker
+***********************
+Number of global clocks: 1
+	Number of BUFGCE: 1
+	Number of BUFGCE_HDIO: 0
+	Number of BUFG_CTRL: 0
+	Number of BUFGCE_DIV: 0
+	Number of BUFG_GT: 0
+	Number of BUFG_PS: 0
+	Number of BUFG_FABRIC: 0
+**************************************
+Clock Nets/Source Overview (CRP Input)
+**************************************
+Clock 1: u_top/u_post_eca1/u_branchB/u_sep/shift_reg[14][46][15]_i_1_n_0_bufg_place
+	Clock source type: BUFGCE
+	Clock source region: X2Y4
+	Clock regions with locked loads: X1Y2 X1Y3 X2Y0 X2Y1 X2Y2 X2Y3 X2Y4 X3Y0 X3Y1 X3Y2 X3Y3 X3Y4 X3Y5 
+	initial rect ((1, 0), (3, 5))
+
+
+
+*****************************
+Clocks With User Constraints:
+*****************************
+No clocks with user constraints found
+
+
+***********************
+Running Pre-CRP Checker
+***********************
+Number of global clocks: 1
+	Number of BUFGCE: 1
+	Number of BUFGCE_HDIO: 0
+	Number of BUFG_CTRL: 0
+	Number of BUFGCE_DIV: 0
+	Number of BUFG_GT: 0
+	Number of BUFG_PS: 0
+	Number of BUFG_FABRIC: 0
+**************************************
+Clock Nets/Source Overview (CRP Input)
+**************************************
+Clock 1: u_top/u_post_eca1/u_branchB/u_sep/shift_reg[14][46][15]_i_1_n_0
+	Clock source type: BUFGCE
+	Clock source region: X2Y4
+	Clock regions with locked loads: X1Y2 X1Y3 X2Y0 X2Y1 X2Y2 X2Y3 X2Y4 X3Y0 X3Y1 X3Y2 X3Y3 X3Y4 X3Y5 
+	initial rect ((1, 0), (3, 5))
+
+
+
+*****************************
+Clocks With User Constraints:
+*****************************
+No clocks with user constraints found
+
+
