@@ -1,344 +1,251 @@
-# Deep Learning for EEG-Based Motor Imagery BCI
-### From Benchmark Architectures to Hardware-Aware Electrode Reduction
-
-> **Graduation Project — E-JUST CSIT / AI & Data Science**
-> Supervised by Dr. Reda Albassiouny & Dr. Sameh Sherif
+Here's the merged README:
 
 ---
 
-## Table of Contents
+# DB-ATCNet — Edge-Optimized EEG Motor Imagery Classification
 
-1. [Project Overview](#project-overview)
-2. [Repository Structure](#repository-structure)
-3. [Dataset](#dataset)
-4. [Preprocessing Pipeline](#preprocessing-pipeline)
-5. [Architecture Benchmarking (Semester 1)](#architecture-benchmarking-semester-1)
-6. [Selected Architecture: DB-ATCNet (Modified)](#selected-architecture-db-atcnet-modified)
-7. [Electrode Reduction Methods (Semester 2)](#electrode-reduction-methods-semester-2)
-8. [Results Summary](#results-summary)
-9. [FPGA Deployment Notes](#fpga-deployment-notes)
-10. [Dependencies & Setup](#dependencies--setup)
-11. [Citation](#citation)
+> **Deep learning meets embedded systems**: A hardware-aware BCI pipeline that classifies motor imagery from just 5 EEG channels at 89.94% accuracy, engineered for real-time FPGA inference in wearable brain-computer interfaces.
+
+[![Python](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org/)
+[![TensorFlow](https://img.shields.io/badge/TensorFlow-≥2.9-orange.svg)](https://www.tensorflow.org/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
 ---
 
-## Project Overview
+## Motivation
 
-This module covers the deep learning component of a wearable Brain-Computer Interface (BCI) system for assistive motion control. The system decodes EEG-based **motor imagery (MI)** — specifically **right-hand vs. left-leg** imagined movements — and translates neural intent into servo actuation commands on an FPGA-embedded platform.
+Standard EEG-based BCI systems rely on 19–128 electrode caps and GPU-class compute — practical for research labs, impractical for consumer wearable devices. This project bridges that gap by systematically optimizing a state-of-the-art deep learning architecture (DB-ATCNet) for deployment on resource-constrained FPGA hardware, reducing the electrode count from 19 to just 5 while retaining competitive accuracy.
 
-The deep learning work spans two semesters:
-
-- **Semester 1:** Systematic benchmarking of nine deep learning architectures on the PhysioNet EEGMMIDB and BCI Competition IV 2a/2b datasets.
-- **Semester 2:** Hardware-aware modification of DB-ATCNet and a three-method electrode reduction study on the HALT dataset targeting a 5-electrode dry-electrode wearable headband.
+Every design decision is guided by a single constraint: **the final model must run in real-time on an FPGA with minimal channel count, fixed compute, and no dynamic memory allocation.**
 
 ---
 
-## Repository Structure
+## Key Results
+
+| Configuration | Channels | Accuracy | Hardware Impact |
+|:---|:---:|:---:|:---|
+| Baseline (Improved CBAM) | 19 | 91.99% | Full EEG cap required |
+| Static top-5 (ablation-ranked) `[Cz, P3, T5, F7, T3]` | 5 | 86.77% | Fixed 5-electrode headband, no per-subject config |
+| Weight-magnitude top-5 `[T5, T3, Fp2, Fz, Pz]` | 5 | 87.08% | Fixed 5-electrode headband |
+| Gumbel-Softmax (per-subject) | 5 | 89.94% | Same headband, per-subject channel LUT at startup |
+
+### Per-Subject Baseline Results (19-Channel, LOSO)
+
+| Subject | Sessions | Mean Accuracy | Mean κ | Std | Protocol |
+|---|---|---|---|---|---|
+| A | 3 | 96.83% | 0.768 | ±3.20% | LOSO 3-fold |
+| B | 3 | 85.65% | 0.625 | ±4.07% | LOSO 3-fold |
+| C | 2 | 85.38% | 0.641 | ±10.61% | LOSO 2-fold |
+| E | 3 | 90.44% | 0.703 | ±6.81% | LOSO 3-fold |
+| F | 3 | 95.87% | 0.748 | ±2.66% | LOSO 3-fold |
+| G | 3 | 96.16% | 0.720 | ±10.19% | LOSO 3-fold |
+| J | 1 | 100.00% | 1.000 | ±0.00% | 80/20 split |
+| K | 2 | 83.79% | 0.694 | ±2.84% | LOSO 2-fold |
+| L | 2 | 98.88% | 0.831 | ±0.84% | LOSO 2-fold |
+| M | 3 | 86.88% | 0.625 | ±6.20% | LOSO 3-fold |
+| **Overall** | | **91.99%** | **0.839** | **±5.41%** | |
+
+> Subjects H and I excluded from electrode reduction experiments (near-chance 19-ch accuracy ~63%, electrode noise > 36 µV). Subject K has anomalously high noise (~155 µV vs. 8–20 µV for clean subjects). Subject J uses 80/20 split due to single session.
+
+---
+
+## Design Evolution
+
+This project follows a three-stage optimization pipeline, each motivated by concrete deployment requirements:
+
+### Stage 1: Attention Mechanism Replacement (MHA → Improved CBAM)
+
+**Problem**: The original DB-ATCNet uses Multi-Head Attention (MHA), which requires dynamic Q/K/V matrix projections and softmax over variable-length sequences — operations that are expensive to implement in RTL and prevent static memory pre-allocation.
+
+**Finding**: Empirical entropy analysis of MHA attention weights across all 10 subjects revealed a global mean normalized Shannon entropy of **H̃ = 0.952**, with 76.2% of all distributions exceeding the H̃ = 0.95 threshold. With only T=6 temporal positions per sliding window, MHA was not performing selective temporal attention — it was operating as a near-uniform feature aggregator, functionally equivalent to a weighted pooling operation.
+
+**Solution**: Replaced MHA with an Improved CBAM (Convolutional Block Attention Module) using only fixed-size global pooling, a small shared MLP, and a 7×1 convolution — all mapping directly to pipelineable FPGA hardware blocks with O(C×H×W) linear complexity.
+
+- **Channel attention**: Global avg + max pool → shared MLP (32→4→32) → sigmoid gate (292 params/window)
+- **Spatial attention**: Avg + max + stochastic pool along channel axis → Conv2D(1, 7×1) → sigmoid (21 params/window)
+- **Total**: 313 params/window × 5 windows = **1,565 params**
+
+**Result**: ~0.5% accuracy drop (92.0% MHA → 91.5% CBAM) — negligible cost for significantly simpler hardware.
+
+---
+
+### Stage 2: Channel Reduction via Ablation Study
+
+**Problem**: 19 electrodes require a full EEG cap with conductive gel — unsuitable for everyday wearable use. Target: a lightweight headband with ≤5 dry electrodes.
+
+**Method**: Trained the full 19-channel model as baseline (LOSO CV per subject), then retrained with each channel individually removed (18-channel), measuring accuracy drop Δ_c per subject. Channels ranked by mean drop across all subjects.
+
+**Top-5 channels**: `[Cz, P3, T5, F7, T3]`
+
+| Rank | Channel | Mean Δ Drop | Neurophysiological Role |
+|---|---|---|---|
+| 1 | Cz | +0.0156 | Primary leg M1 generator (medial wall / paracentral lobule) |
+| 2 | P3 | +0.0128 | Right-hand body schema (left parietal sensorimotor integration) |
+| 3 | T5 | +0.0108 | Right-limb proprioceptive representation (posterior STS) |
+| 4 | F7 | +0.0106 | Right-hand motor planning (left DLPFC / inferior frontal) |
+| 5 | T3 | +0.0103 | Additional right-hemisphere body schema coverage |
+
+> **Why not C3/C4?** C3 ranked negatively (removing it *improves* accuracy) due to EMG contamination from the temporalis muscle, anatomical offset from the true hand knob of M1, and task asymmetry — the discriminative signal for right-hand vs. left-leg is concentrated in the parietal-temporal-frontal network, not the textbook central electrodes.
+
+**Hardware advantage**: Static channel set = hardwired 5-of-19 analog multiplexer; zero runtime configuration needed.
+
+**Computational cost**: 20 full LOSO runs/subject × 10 subjects × avg 2.5 sessions × 45 min ≈ 375 GPU-hours.
+
+---
+
+### Stage 3: Learned Channel Selection (Gumbel-Softmax)
+
+**Problem**: A single static channel set loses accuracy because different subjects have different optimal electrode locations due to cortical geometry, skull thickness, and mental execution strategy.
+
+**Method**: Prepended a Gumbel-Softmax concrete selector layer ([Strypsteen & Bertrand 2021](https://arxiv.org/abs/2102.09050)) jointly trained with all network weights. During training, each of K=5 selection neurons samples soft channel mixtures via the Concrete distribution; at inference, Gumbel noise is removed and hard selection reduces to `argmax(α_nk)` — a simple per-subject lookup table of 5 channel indices loaded to the FPGA channel-selection register at startup.
+
+**Key hyperparameters**:
 
 ```
-deep-learning/
-├── benchmark/                  # Semester 1: all nine architecture implementations
-│   ├── eegnet.py
-│   ├── shallow_convnet.py
-│   ├── deep_convnet.py
-│   ├── eeg_tcnet.py
-│   ├── eegnex.py
-│   ├── atcnet.py
-│   ├── ctnet.py
-│   ├── graph_cspnet.py
-│   └── db_atcnet_original.py
-│
-├── db_atcnet_modified/         # Semester 2: MHA → Improved CBAM modification
-│   ├── model.py                # Full model definition (ADBC + CBAM + TCFN)
-│   ├── cbam.py                 # Improved CBAM module (channel + spatial attention)
-│   ├── tcfn.py                 # Temporal Convolutional Fusion Network block
-│   └── train.py                # Training loop (LOSO cross-validation)
-│
-├── electrode_reduction/        # Three-method electrode selection pipeline
-│   ├── ablation_study.py       # Method 1: Leave-one-channel-out ablation
-│   ├── weight_magnitude.py     # Method 2: DepthwiseConv2D weight norm ranking
-│   └── gumbel_softmax.py       # Method 3: End-to-end differentiable selection
-│
-├── mha_analysis/               # Attention entropy analysis (MHA failure evidence)
-│   └── entropy_analysis.py
-│
-├── preprocessing/
-│   └── pipeline.py             # Z-score normalization, epoch extraction
-│
-├── configs/
-│   └── gumbel_channel_indices/ # Per-subject JSON channel configs for FPGA LUT
-│
-├── weights/                    # Exported HDF5 model weights (per subject, per config)
-│
-├── results/
-│   ├── benchmark_table.csv
-│   ├── baseline_19ch_loso.csv
-│   ├── ablation_5ch_loso.csv
-│   ├── weight_guided_5ch_loso.csv
-│   └── gumbel_5ch_loso.csv
-│
-└── README.md
+K              = 5 selection neurons
+β_start        = 10.0   (diffuse soft mixing → exploration)
+β_end          = 0.1    (near-hard selection → exploitation)
+T_anneal       = 125 epochs (first 25% of 500-epoch budget)
+τ              = 3.0 → 1.0  (duplicate penalty annealing)
+λ_reg          = 1.0
 ```
+
+**Most frequently selected channels across subjects**:
+- **F8** — appears in 8/10 subjects (right inferior frontal gyrus; mirror neuron / motor inhibition system)
+- **Cz** — dominant for 5/10 subjects (consistent with ablation rank 1)
+
+**Result**: 89.94% accuracy — recovering most of the gap to the 19-channel baseline while maintaining the 5-channel hardware constraint.
+
+![Architecture](https://github.com/zk-xju/DB-ATCNet/assets/156686159/99f2e790-57f6-43cb-9729-56272b98b027)
 
 ---
 
-## Dataset
+## Architecture
 
-**HALT Dataset** (Semester 2 primary dataset)
+The inference pipeline operates entirely on fixed tensor shapes with no dynamic memory allocation:
 
-- Binary motor imagery task: **right-hand vs. left-leg**
-- 19-channel EEG, 200 Hz sampling rate
-- 10 subjects (H and I excluded from electrode reduction — near-chance 19-ch accuracy, extreme noise > 36 µV)
-- Evaluation protocol: **Leave-One-Session-Out (LOSO)** cross-validation; Subject J (single session) uses stratified 80/20 split with 5 seeds
-- Hardware acquisition: EEG-1200 JE-921A with hardware bandpass 0.53–70 Hz and 50 Hz notch
+- **ADBC Block** — Dual-branch depthwise separable convolution (D=2 and D=4) with ECA (Efficient Channel Attention) for joint spatial-temporal feature extraction. Two-stage pooling compresses 600 samples → 10 temporal steps (~50 ms/step).
+- **Improved CBAM** — Sequential channel attention (dual-pool shared MLP) and spatial attention (tri-pool: average, max, stochastic pooling) applied per sliding window.
+- **TCFN Block** — Temporal Convolutional Fusion Network with dilated causal convolutions (dilation rates 1, 2) and multi-level residual connections. Causal padding only — no lookahead buffer required.
+- **Sliding Window Fusion** — Five overlapping 6-step windows extracted from the 10-step feature sequence, each independently classified and averaged for the final 2-class softmax prediction.
 
-**Semester 1 Datasets**
-
-- [PhysioNet EEGMMIDB](https://physionet.org/content/eegmmidb/1.0.0/) — 109 subjects, 4-class MI
-- [BCI Competition IV 2a/2b](https://www.bbci.de/competition/iv/) — standard benchmark
+For the complete layer-by-layer tensor shape flow and operator specification, see **[FPGA_DEPLOYMENT_DOC.md](FPGA_DEPLOYMENT_DOC.md)**.
 
 ---
 
 ## Preprocessing Pipeline
 
 ```
-Raw EEG (hardware-filtered at acquisition)
+Raw EEG
     │
-    ├── [HALT] No additional bandpass / notch filtering applied
-    │         (hardware filter 0.53–70 Hz + 50 Hz notch already applied)
+    ├── [HALT dataset]
+    │     No additional filtering applied.
+    │     Hardware bandpass 0.53–70 Hz + 50 Hz notch already applied
+    │     at acquisition (EEG-1200 JE-921A system).
+    │     DB-ATCNet learns its own spectral filters via temporal Conv2D.
     │
-    ├── [BCI IV / PhysioNet] Butterworth bandpass 4–40 Hz (4th order)
-    │                        + IIR notch 50 Hz (Q=30)
+    ├── [BCI IV / PhysioNet]
+    │     Butterworth bandpass 4–40 Hz (4th order)
+    │     + IIR notch 50 Hz (Q=30)
     │
     ├── Z-score normalization per channel per trial
-    │   (fit on training folds only — no leakage)
+    │   (fit on training folds only — strictly no leakage across folds)
     │
     └── Epoch segmentation
-            HALT / BCI IV 2a:  0.5 – 4.0 s post-cue  →  (C, 600) @ 200 Hz
-            PhysioNet:         0.0 – 4.0 s post-cue
-```
-
-> **Note:** DB-ATCNet learns its own spectral filters through its temporal convolutional first layer. Manual bandpass filtering before model input is intentionally omitted for the HALT dataset, consistent with the dual-branch ADBC design (D=2 and D=4 branches capture complementary spectral ranges internally).
-
----
-
-## Architecture Benchmarking (Semester 1)
-
-Nine architectures evaluated. Key FPGA-suitability ratings and findings:
-
-| Model | Params | FPGA Suitability | Key Innovation | Limitation |
-|---|---|---|---|---|
-| EEGNet | ~2,500 | ✅ Excellent | Depthwise-separable temporal-spatial CNN | Limited temporal context |
-| ShallowConvNet | ~60,724 | ✅ Good | Embeds FBCSP as differentiable layers | No hierarchical abstraction |
-| DeepConvNet | ~199,829 | ⚠️ Moderate | Hierarchical 4-block CNN | Overfitting risk; large memory |
-| EEG-TCNet | ~4,272 | ✅ Very Good | Causal dilated temporal context | No spatial attention |
-| EEGNeX | ~63,626 | ✅ Good | Parallel dilated multi-resolution | Routing overhead |
-| ATCNet | ~69,900 | ⚠️ Moderate | Sliding-window attention ensemble | O(T²) MHA; variable softmax |
-| CTNet | ~25,700 | ⚠️ Low-Moderate | Global Transformer + S&R augmentation | Transformer cost |
-| Graph-CSPNet | ~84,285 | ❌ Low | SPD manifold graph neural network | Riemannian ops not FPGA-friendly |
-| DB-ATCNet (orig.) | ~150,000 | ⚠️ Moderate | Dual-branch ADBC + sliding MHA | MHA bottleneck |
-| **DB-ATCNet (modified)** | **~144,000** | **✅ Good** | **MHA replaced by Improved CBAM** | **S2 base architecture** |
-
-**Selection rationale for DB-ATCNet:** highest accuracy among evaluated architectures; modular design allows targeted MHA → CBAM replacement; fixed-shape tensor flow enables static FPGA memory allocation.
-
----
-
-## Selected Architecture: DB-ATCNet (Modified)
-
-### Modification: MHA → Improved CBAM
-
-**Empirical evidence for MHA replacement:** attention weight entropy analysis across all 10 subjects showed a global mean normalized Shannon entropy of **H̃ = 0.952** (76.2% of all distributions exceed H̃ = 0.95 threshold). With only T=6 temporal positions per window, MHA was not performing selective temporal attention — it was operating as a near-uniform feature aggregator. The marginal 0.5 pp accuracy advantage of MHA (92.0% vs 91.5%) does not justify its FPGA cost.
-
-### Architecture Flow (5-channel inference)
-
-```
-Input (1, 1, 5, 600)
-    │
-    Permute → (1, 600, 5, 1)
-    │
-    ┌─── ADBC Block ───────────────────────────────────────────────────┐
-    │  Conv2D(16, 64×1) → BN → ECA1(k=3)                              │
-    │         │                                                         │
-    │    ┌────┴────┐                                                    │
-    │  Branch1   Branch2                                                │
-    │  D=2        D=4                                                   │
-    │  (32 maps)  (64→32 maps)                                          │
-    │    └────┬────┘                                                    │
-    │      Add → ECA2 → Squeeze                                         │
-    └──────────────────────────────────────────────────────────────────┘
-    │
-    (1, 10, 32)  [10 steps × 50 ms/step]
-    │
-    Sliding Window × 5  (windows of length 6, 50% overlap)
-    │
-    ┌─ Per-window (×5, independent weights) ─┐
-    │  Improved CBAM (313 params/window)      │
-    │  TCFN (dilated causal TCN, d={1,2})     │
-    │  Dense(2) → softmax                     │
-    └─────────────────────────────────────────┘
-    │
-    Average across 5 windows → argmax → predicted class
-```
-
-### Improved CBAM (per window)
-
-- **Channel attention:** Global avg + max pool → shared MLP (32→4→32) → sigmoid gate (292 params)
-- **Spatial attention:** Avg + max + stochastic pool along channel axis → concatenate → Conv2D(1, 7×1) → sigmoid (21 params)
-- **Total:** 313 params/window × 5 windows = **1,565 params**; O(C×H×W) linear complexity — FPGA-friendly
-
-### Training Configuration
-
-```python
-optimizer  = Adam(lr=0.0009, weight_decay=1e-4)
-batch_size = 32
-epochs     = 500  # fixed; no early stopping
-checkpoint = best validation accuracy across training
+          HALT / BCI IV 2a:  0.5–4.0 s post-cue  →  (C, 600) @ 200 Hz
+          PhysioNet:         0.0–4.0 s post-cue
 ```
 
 ---
 
-## Electrode Reduction Methods (Semester 2)
+## FPGA Implementation (In Progress)
 
-Target: reduce from 19 electrodes (full EEG cap) to **5 dry electrodes** (wearable headband).
+Target hardware: **Xilinx Zynq UltraScale+ ZCU106 (XCZU7EV)**
 
-### Method 1 — Ablation-Based Static Selection (Gold Standard)
+**Milestone Status**:
+- [x] Model architecture finalized and frozen for inference
+- [x] Inference specification documented — [`FPGA_DEPLOYMENT_DOC.md`](FPGA_DEPLOYMENT_DOC.md)
+- [x] Weight export pipeline established (HDF5 → per-layer numpy arrays, organized by subject and configuration)
+- [x] Per-subject Gumbel channel index JSON configs ready for FPGA LUT loading
+- [ ] RTL design and synthesis
+- [ ] On-chip validation and latency benchmarking
 
-Retrain 19 separate 18-channel models per subject; measure accuracy drop per removed channel.
+**Channel selection hardware modes**:
+- Static (ablation / weight-guided) → hardwired 5-of-19 analog MUX; no runtime config
+- Gumbel (per-subject) → 25-bit config register loaded from flash LUT at startup; downstream RTL is identical in both cases
 
-**Final 5-channel set:** `[Cz, P3, T5, F7, T3]`
+---
 
-- **Cz** — primary leg M1 generator (medial wall / paracentral lobule)
-- **P3** — right-hand body schema (left parietal sensorimotor integration)
-- **T5** — right-limb proprioceptive representation (posterior superior temporal sulcus)
-- **F7** — right-hand motor planning (left DLPFC / inferior frontal)
-- **T3** — additional right-hemisphere body schema coverage
+## Project Structure
 
-> **Why not C3/C4?** For right-hand vs. left-leg, C3 ranked negatively (removing it *improves* accuracy) due to EMG contamination from the temporalis muscle and anatomical offset from the true hand knob of M1. The discriminative signal is concentrated in the parietal-temporal-frontal network.
-
-**Computational cost:** 20 full LOSO runs/subject × 10 subjects × avg 2.5 sessions × 45 min ≈ **375 GPU-hours**
-
-### Method 2 — Weight-Magnitude Ranking
-
-Proxy importance from L2 norm of DepthwiseConv2D filter weights per channel. 20× cheaper than ablation (reuses baseline model).
-
-**Selected set:** `[T5, T3, Fp2, Fz, Pz]`
-
-⚠️ **Critical finding:** Fp2 ranked 3rd by weight magnitude but ranked **last (19th)** by ablation with a *negative* accuracy drop. Weight magnitude reflects co-adaptation within the full 19-channel network, not standalone contribution. This demonstrates why single-method analysis is insufficient.
-
-### Method 3 — Gumbel-Softmax Learned Selection
-
-End-to-end differentiable channel selection jointly optimized with network weights. Each subject gets a personalized 5-channel set.
-
-Key hyperparameters:
 ```
-K            = 5 selection neurons
-β_start      = 10.0  (diffuse soft mixing)
-β_end        = 0.1   (near-hard selection)
-T_anneal     = 125 epochs (first 25% of training)
-τ            = 3.0 → 1.0  (duplicate penalty annealing)
-λ            = 1.0  (regularization weight)
+├── HALT_main.py                  # Training entry point (baseline, ablation, Gumbel modes)
+├── models.py                     # Model architectures (DB-ATCNet, Gumbel variant)
+├── attention_models.py           # Attention modules (MHA, ECA, CBAM, Improved CBAM)
+├── gumbel_channel_selection.py   # Gumbel-Softmax selection layer & annealing callbacks
+├── HALT_DataLoad.py              # HaLT dataset loader with session-aware CV splitting
+├── channel_Importance.py         # Channel ranking from ablation study results
+├── mha_entropy_analysis.py       # MHA attention weight entropy analysis
+├── visualize_features.py         # Feature map visualization and attention analysis
+├── FPGA_DEPLOYMENT_DOC.md        # Complete FPGA inference specification for RTL team
+└── HALT/                         # HaLT dataset directory (not included in repo)
 ```
 
-At inference: Gumbel noise removed; `argmax(α_nk)` gives hard channel selection stored in a **per-subject JSON LUT** loaded to the FPGA at headband startup.
-
-**Most frequently selected channels across subjects:**
-- **F8** — appears in 8/10 subjects (right inferior frontal gyrus; mirror neuron / motor inhibition)
-- **Cz** — dominant for 5/10 subjects (consistent with ablation rank 1)
-
 ---
 
-## Results Summary
+## Getting Started
 
-### 19-Channel Baseline (Modified DB-ATCNet, LOSO)
-
-| Subject | Sessions | Mean Accuracy | Mean κ | Std |
-|---|---|---|---|---|
-| A | 3 | 96.83% | 0.768 | ±3.20% |
-| B | 3 | 85.65% | 0.625 | ±4.07% |
-| C | 2 | 85.38% | 0.641 | ±10.61% |
-| E | 3 | 90.44% | 0.703 | ±6.81% |
-| F | 3 | 95.87% | 0.748 | ±2.66% |
-| G | 3 | 96.16% | 0.720 | ±10.19% |
-| J | 1 | 100.00% | 1.000 | ±0.00% |
-| K | 2 | 83.79% | 0.694 | ±2.84% |
-| L | 2 | 98.88% | 0.831 | ±0.84% |
-| M | 3 | 86.88% | 0.625 | ±6.20% |
-| **Overall** | | **91.99%** | **0.839** | **±5.41%** |
-
-> Subject K has anomalously high electrode noise (~155 µV baseline Std vs. 8–20 µV for clean subjects).
-
-### 5-Channel Comparison (All Methods)
-
-| Configuration | Channels | Mean Acc. | Mean κ | vs. 19-ch |
-|---|---|---|---|---|
-| 19-ch Baseline | 19 | 91.99% | 0.839 | — |
-| Weight-Guided `[T5,T3,Fp2,Fz,Pz]` | 5 | 87.08% | 0.741 | −4.91% |
-| Ablation-Guided `[Cz,P3,T5,F7,T3]` | 5 | 86.77% | 0.735 | −5.22% |
-| **Gumbel Per-Subject** | **5** | **89.94%** | **0.799** | **−2.05%** |
-
-The Gumbel approach closes 60% of the gap between static 5-channel selection and the full 19-channel baseline, while eliminating 74% of electrodes.
-
----
-
-## FPGA Deployment Notes
-
-This module delivers three artifacts to the hardware team:
-
-1. **Inference specification** — layer-by-layer tensor shapes, weight formats (float32 HDF5), operator definitions for all DB-ATCNet operations.
-2. **Trained weights** — HDF5 exports per subject per configuration (19-ch, ablation-5ch, weight-5ch, Gumbel-5ch), organized as per-layer numpy arrays.
-3. **Gumbel channel index configs** — per-subject JSON files in `configs/gumbel_channel_indices/` specifying 5 electrode indices per LOSO fold, loaded to FPGA channel-selection register at startup.
-
-**FPGA channel selection modes:**
-- Static (ablation / weight) → hardwired 5-of-19 analog multiplexer; no runtime config
-- Gumbel (per-subject) → 25-bit config register loaded from flash LUT at startup; downstream RTL is identical
-
-**Target hardware:** Xilinx Zynq UltraScale+ ZCU106 (XCZU7EV)
-**Reported inference latency:** 2.31 ms on FPGA
-
----
-
-## Dependencies & Setup
+### Requirements
 
 ```bash
-pip install tensorflow>=2.10 numpy scipy scikit-learn mne h5py
+pip install tensorflow>=2.9 numpy scipy scikit-learn matplotlib mne h5py
 ```
 
-**Training a model (example — LOSO on HALT with Gumbel selection):**
+### Usage
 
 ```bash
-python electrode_reduction/gumbel_softmax.py \
-    --subject A \
-    --data_path /path/to/HALT \
-    --n_channels 19 \
-    --k_select 5 \
-    --epochs 500 \
-    --beta_start 10.0 \
-    --beta_end 0.1
+# Baseline: full 19-channel subject-dependent training
+python HALT_main.py --single-run
+
+# Ablation: evaluate reduced channel subsets
+python HALT_main.py --ablation --ablation-channels 3 5 7 10
+
+# Gumbel-Softmax: learnable per-subject channel selection
+python HALT_main.py --gumbel-select --gumbel-k 5
+
+# Gumbel on specific subjects only
+python HALT_main.py --gumbel-select --gumbel-k 5 --subjects A B C
 ```
 
-**Running the MHA entropy analysis:**
-
-```bash
-python mha_analysis/entropy_analysis.py \
-    --model_weights weights/subject_A_19ch_fold1.h5 \
-    --data_path /path/to/HALT \
-    --subject A
-```
+All modes use leave-one-session-out cross-validation per subject. Results, confusion matrices, and learning curves are saved to `results/`.
 
 ---
 
-## Citation
+## Dataset
 
-If you use this code or findings, please cite the following works that this project builds upon:
+### HaLT (Hand and Leg Task)
 
-```
-[1] Lawhern et al., "EEGNet: A compact CNN for EEG-based BCIs," J. Neural Eng., 2018.
-[2] Altaheri et al., "ATCNet," IEEE TNSRE, 2022.
-[3] Ke et al., "DB-ATCNet," 2023.
-[4] Strypsteen & Bertrand, "End-to-end learnable EEG channel selection," J. Neural Eng., 2021.
-[5] Woo et al., "CBAM: Convolutional Block Attention Module," ECCV, 2018.
-```
+Place the HaLT `.mat` files in the `HALT/` directory. The dataset contains 19-channel EEG recordings at 200 Hz from multiple subjects performing Right Hand and Left Leg motor imagery tasks across multiple recording sessions.
+
+**Channel layout** (19 EEG leads, indices 0–18):
+`Fp1(0), Fp2(1), F3(2), F4(3), C3(4), C4(5), P3(6), P4(7), O1(8), O2(9), F7(10), F8(11), T3(12), T4(13), T5(14), T6(15), Fz(16), Cz(17), Pz(18)`
 
 ---
 
-*E-JUST CSIT Department — AI & Data Science Track*
+## References
+
+1. H. Altaheri et al., "Physics-informed attention temporal convolutional network for EEG-based motor imagery classification," *IEEE Trans. Ind. Inform.*, 2022. [doi:10.1109/TII.2022.3197419](https://doi.org/10.1109/TII.2022.3197419)
+2. T. Strypsteen and A. Bertrand, "End-to-end learnable EEG channel selection for deep neural networks with Gumbel-softmax," *arXiv:2102.09050*, 2021.
+3. Z. Ke et al., "DB-ATCNet: Dual-Branch Convolution Network with Efficient Channel Attention," [GitHub](https://github.com/zk-xju/DB-ATCNet).
+4. V. J. Lawhern et al., "EEGNet: A compact CNN for EEG-based BCIs," *J. Neural Eng.*, 2018.
+5. C. Woo et al., "CBAM: Convolutional Block Attention Module," *ECCV*, 2018.
+
+---
+
+## Acknowledgments
+
+This work is built upon the [DB-ATCNet](https://github.com/zk-xju/DB-ATCNet) architecture and the [EEG-ATCNet](https://github.com/Altaheri/EEG-ATCNet) repository by Altaheri et al. We gratefully acknowledge the original authors for making their code and research publicly available.
+
+---
+
+*E-JUST CSIT Department — AI & Data Science | Supervised by Dr. Reda Albassiouny & Dr. Sameh Sherif*
