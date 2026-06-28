@@ -1,7 +1,3 @@
-Here's the merged README:
-
----
-
 # DB-ATCNet — Edge-Optimized EEG Motor Imagery Classification
 
 > **Deep learning meets embedded systems**: A hardware-aware BCI pipeline that classifies motor imagery from just 5 EEG channels at 89.94% accuracy, engineered for real-time FPGA inference in wearable brain-computer interfaces.
