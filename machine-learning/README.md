@@ -1,13 +1,4 @@
-# EEG Motor Imagery Classification — BCI Graduation Project
-
-> **Egypt-Japan University of Science and Technology (E-JUST)**
-> Brain-Computer Interface System for Assistive Motion Control & Rehabilitation
-
----
-
-## Overview
-
-This project implements a complete EEG signal processing and machine learning pipeline for **motor imagery (MI) classification**, designed for use in a brain-computer interface system. The pipeline covers subject selection, preprocessing, feature extraction, data augmentation, model training, and evaluation across two benchmark datasets.
+This project implements a complete EEG signal processing and machine learning pipeline for **motor imagery (MI) classification**, designed for use in a brain-computer interface system. The pipeline covers subject selection, preprocessing, feature extraction, data augmentation, model training, and evaluation across two benchmark datasets using ML models.
 
 ---
 
