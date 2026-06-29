@@ -1,0 +1,14 @@
+Subject J — Gumbel K=5 — Single session (80/20 split)
+============================================================
+  Subject J Fold 1: Acc=1.00000  Kappa=1.00000  Time=2.62min
+    Selected channels (4 unique): ['Cz', 'Cz', 'T5', 'F7', 'F8']
+
+============================================================
+Subject J Summary (Gumbel K=5, LOSO, 1 sessions)
+  Per-session Acc:   ['1.0000']
+  Per-session Kappa: ['1.0000']
+  Avg Acc:   1.00000 ± 0.00000
+  Avg Kappa: 1.00000 ± 0.00000
+  Selected channels per fold: [[17, 17, 14, 10, 11]]
+  Time: 2.72 min
+============================================================
