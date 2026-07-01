@@ -1,4 +1,4 @@
-name: eeg-fnirs-bci
+name: neuromove
 channels:
   - conda-forge
   - defaults

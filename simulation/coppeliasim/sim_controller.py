@@ -3,7 +3,7 @@ sim_controller.py — Milestone 4: CoppeliaSim Integration (FINAL)
 =================================================================
 BCI-Online-Simulation Project
 
-Connects to the scene built by build_scene.py and drives the 3 joints
+Connects to the scene built by build_scene.lua and drives the 3 joints
 from BCI classifier output via mapper.py.
 
 Custom sync: we do NOT use sim.setStepping(). CoppeliaSim runs freely.

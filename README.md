@@ -122,7 +122,7 @@ NeuroMove/
 ├── results/                   # Shared figures / reports / logs (git-ignored contents)
 ├── tests/                     # Cross-component integration tests
 │
-├── environment.yml            # Conda environment (name: eeg-fnirs-bci)
+├── environment.yml            # Conda environment (name: neuromove)
 ├── requirements.txt           # pip fallback
 ├── NeuroMove_poster.pdf       # Project poster
 └── NeuroMove_flyer.pdf        # Project flyer
@@ -158,7 +158,7 @@ git clone <repo-url> NeuroMove && cd NeuroMove
 
 # 2. Create the Python environment (shared across the AI components)
 conda env create -f environment.yml      # or: pip install -r requirements.txt
-conda activate eeg-fnirs-bci
+conda activate neuromove
 
 # 3. Pick a component and follow its README
 cd deep-learning        && cat README.md   # DB-ATCNet training & channel selection
@@ -202,8 +202,11 @@ each component README for exact prerequisites.
 
 Graduation project (B.Sc.), **Egypt-Japan University of Science and Technology (E-JUST)** —
 Computer Science &amp; Information Technology, AI &amp; Data Science, 2025 / 2026.
-FEA / biomaterials subteam: Noran Morad, Mariam Ihab, Moustafa Abdullah.
-Supervised by Dr. Reda Albassiouny &amp; Dr. Sameh Sherif.
+
+**Team:** Ahmed Elsheikh · Karim Hossam · Miral Farghaly · Noran Morad · Moustafa Abdullah ·
+Ezaldeen Ahmed · Rasha Gamel · Mariam Ihab · Noureen Tamer · Jomana George
+
+**Supervisors:** Dr. Reda Albassiouny &amp; Dr. Sameh Sherif
 
 ---
 

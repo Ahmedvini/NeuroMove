@@ -112,7 +112,7 @@
 
 ### ✅ Milestone 4: CoppeliaSim Integration
 
-**Files:** `sim_controller.py`, `build_scene.lua`, `build_scene.py`
+**Files:** `sim_controller.py`, `build_scene.lua`
 
 - ZMQ remote API connection to CoppeliaSim
 - Real-time joint control (shoulder, elbow, wrist)
@@ -176,8 +176,7 @@
 | `Physionet_main.py`      | Training script for Physionet Motor Imagery dataset.                                                 |
 | `BCI2A_preprocess.py`    | **Milestone 1** — Bandpass filtering, normalization, windowing.                                      |
 | `Physionet_DataLoad.py`  | **Milestone 1** — Dataset loading, subject enumeration, trial segmentation.                          |
-| `build_scene.py`         | Lua/Python wrapper for CoppeliaSim scene building.                                                   |
-| `build_scene.lua`        | **Milestone 4** — Lua script executed in CoppeliaSim to create 3-joint arm.                          |
+| `build_scene.lua`        | **Milestone 4** — Lua Commander script pasted into CoppeliaSim to create the 3-joint arm.            |
 | `Dockerfile`             | **Milestone 7** — Container image definition for API service deployment.                             |
 | `docker-compose.yml`     | **Milestone 7** — Compose service for local/cloud deployment orchestration.                          |
 | `.dockerignore`          | **Milestone 7** — Excludes development artifacts from Docker build context.                          |
