@@ -381,7 +381,7 @@ This project uses the **Shin et al. (2016, 2017)** open-access simultaneous EEG-
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](../LICENSE) file for details.
 
 ---
 
