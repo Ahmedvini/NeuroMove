@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/pytorch-2.0+-ee4c2c.svg" alt="PyTorch">
-  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
+  <img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-research-orange.svg" alt="Status">
 </p>
 
@@ -381,7 +381,7 @@ This project uses the **Shin et al. (2016, 2017)** open-access simultaneous EEG-
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](../LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](../LICENSE) file for details.
 
 ---
 

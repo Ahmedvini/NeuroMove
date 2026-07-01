@@ -311,4 +311,4 @@ An automated Python pipeline converts COMSOL thermal exports into a structured d
 
 ## License
 
-This project is part of a graduation project at [E-JUST](https://www.ejust.edu.eg/). All rights reserved.
+This project is part of a graduation project at [E-JUST](https://www.ejust.edu.eg/) and is licensed under the GNU General Public License v3.0 — see the [root LICENSE](../LICENSE) file for details.
