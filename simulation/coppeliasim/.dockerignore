@@ -1,0 +1,14 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.pytest_cache/
+.venv/
+venv/
+bci_env/
+.env
+*.ipynb
+scenes/*.ttt

@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  bci-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bci-online-simulation-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped

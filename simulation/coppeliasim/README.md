@@ -1,30 +1,80 @@
-# CoppeliaSim
+# DB-ATCNet
 
-Robotics / experimental-setup simulation (formerly V-REP).
+Dual-Branch Convolution Network with Efficient Channel Attention for EEG-Based Motor Imagery Classification
 
-## Layout
+This paper is an improvement on the paper "Attention temporal convolutional network for EEG-based motor imagery classification". The code is used again in the "https://github.com/Altaheri/EEG-ATCNet". Kudos to the original authors for their open source and contributions.
 
-```
-coppeliasim/
-├── scenes/     # Simulation scenes (.ttt)
-├── models/     # Reusable models (.ttm)
-├── scripts/    # Lua child scripts + Python/ZMQ remote-API clients
-└── results/    # Logs, recorded trajectories, exports
-```
+![1 4](https://github.com/zk-xju/DB-ATCNet/assets/156686159/99f2e790-57f6-43cb-9729-56272b98b027)
 
-## Remote API (Python)
+# Development environment
+
+Models were trained and tested on Ubuntu 20.04 by a single GPU, Nvidia RTX 3080 10GB (CUDA 11.2), using Python 3.8 with TensorFlow framework. The following packages are required:
+
+TensorFlow 2.9.0
+
+matplotlib 3.5.3
+
+NumPy 1.23.1
+
+scikit-learn 1.3.0
+
+SciPy 1.10.1
+
+mne 0.23.4
+
+# Dataset
+
+The BCI Competition IV-2a dataset needs to be downloaded and the data path placed at 'data_path' variable in BCI_2A_main.py file. The dataset can be downloaded from https://www.bbci.de/competition/iv/#dataset2a.
+
+The Physionet EEG motor movement/imagery dataset needs to be downloaded and the data path placed at 'data_path' variable in Physionet_main.py file. The dataset can be downloaded from https://physionet.org/content/eegmmidb/1.0.0/.
+
+# Online Pipeline and Deployment
+
+For the complete project guide (milestones, API, simulation, Docker, troubleshooting), see:
+
+- `PROJECT_DOCUMENTATION.md`
+
+## Quick API start
 
 ```bash
-pip install coppeliasim-zmqremoteapi-client
+python api.py
 ```
 
-```python
-from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-client = RemoteAPIClient()
-sim = client.require('sim')
-sim.startSimulation()
+Swagger:
+
+```text
+http://localhost:8000/docs
 ```
 
-## Notes
-- `.ttt`/`.ttm` are binary; consider Git LFS for large scenes.
-- Keep remote-API control logic in `scripts/` so scenes stay reusable.
+## Quick Docker start
+
+```bash
+docker build -t bci-online-simulation .
+docker run --rm -p 8000:8000 bci-online-simulation
+```
+
+Or with compose:
+
+```bash
+docker compose up --build
+```
+
+## Quick visual simulation
+
+With CoppeliaSim running and `scenes/bci_exo_scene.ttt` loaded:
+
+```bash
+scripts/run_full_simulation.sh full
+```
+
+Short smoke run:
+
+```bash
+scripts/run_full_simulation.sh quick
+```
+
+Save full API JSON response to `runs/`:
+
+```bash
+scripts/run_full_simulation_and_save.sh full
+```

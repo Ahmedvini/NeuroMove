@@ -1,0 +1,34 @@
+# Virtual environments
+bci_env/
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Results and outputs (generated files)
+BCI_2A_Results/
+Physionet_FourClass_Results/
+*.pkl
+*.npy
+*.csv
+runs/
+logs/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
