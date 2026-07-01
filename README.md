@@ -84,8 +84,8 @@ fNIRS hemodynamics from EEG to reach hybrid-BCI accuracy from an EEG headset alo
 ```
 NeuroMove/
 ├── machine-learning/          # Classical ML MI pipeline (CSP+PSD → LDA/SVM/RF/XGB)
-│   ├── src/                   #   preprocessing · features · models · evaluation
-│   ├── notebooks/
+│   ├── notebooks/             #   full pipeline: preprocessing → features → models → eval
+│   ├── src/                   #   package scaffold (code currently lives in notebooks/)
 │   └── saved-models/          #   (git-ignored)
 │
 ├── deep-learning/             # DB-ATCNet — edge-optimized DL classifier
